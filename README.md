@@ -10,6 +10,7 @@
 - 列出所有年份及每年的论文数量，点击年份加载论文；每次加载 1000 篇，更多的点“加载更多”
 - 会议中 dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
 - 每篇论文显示标题、作者和链接：开放获取页面（CVF、OpenReview、ACL Anthology、PMLR 等）优先，另附 DOI 和 dblp 链接
+- 标题里的 LaTeX 公式（如 `$\beta$-DARTS`、`${\text{CA}^{2}\text{ST}}$`）会转成普通文字显示（β-DARTS、CA²ST）
 - 按标题或作者筛选
 - 导出 CSV（Excel 可直接打开），或一键复制所有论文链接
 - 地址栏会记住当前查询，例如 `?q=CVPR&venue=conf/cvpr&year=2024`，可以直接分享

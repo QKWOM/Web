@@ -483,7 +483,7 @@ ORDER BY ?title`);
 
     const paper = {
       id: val(row, 'publ'),
-      title: val(row, 'title').replace(/\s*\.$/, ''),
+      title: latexToUnicode(val(row, 'title')).replace(/\s*\.$/, ''),
       authors,
       year: String(year),
       venue: venueLabel(venue),
@@ -539,7 +539,7 @@ function openreviewPaper(note, venue, year) {
   if (field('pdf')) links.push(`https://openreview.net/pdf?id=${id}`);
   return {
     id: String(note.id || ''),
-    title: String(field('title') || '').trim().replace(/\s*\.$/, ''),
+    title: latexToUnicode(String(field('title') || '').trim()).replace(/\s*\.$/, ''),
     authors: (Array.isArray(field('authors')) ? field('authors') : []).map(String),
     year: String(year),
     venue: venueLabel(venue),
