@@ -12,9 +12,11 @@ import http.server
 import json
 import os
 import shutil
+import socket
 import ssl
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 import webbrowser
@@ -102,18 +104,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+def port_in_use(port):
+    """检查本机 IPv4 和 IPv6 地址上是否已有程序在监听这个端口。
+
+    macOS 上 python3 -m http.server 会监听 IPv6，这时本服务仍能在 IPv4 上启动成功，
+    但浏览器访问 localhost 时可能连到旧服务，所以两个都要检查。
+    """
+    for family, host in ((socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                s.settimeout(0.3)
+                if s.connect_ex((host, port)) == 0:
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def start_server(preferred_port):
+    for port in range(preferred_port, preferred_port + 20):
+        if port_in_use(port):
+            continue
+        try:
+            # 只监听本机，避免中转服务暴露到局域网
+            return http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler), port
+        except OSError:
+            continue
+    print(f'端口 {preferred_port}-{preferred_port + 19} 都被占用了，请换个端口：python3 server.py 9000')
+    sys.exit(1)
+
+
+def check_dblp():
+    """启动时试着连一次 dblp，把结果打印出来，方便排查网络问题。"""
     try:
-        # 只监听本机，避免中转服务暴露到局域网
-        server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
-    except OSError:
-        print(f'端口 {port} 已被占用（之前启动的服务可能还在运行）。')
-        print(f'请先关掉它，或者换个端口：python3 server.py {port + 1}')
-        sys.exit(1)
-    url = f'http://localhost:{port}/'
-    print(f'会议论文速查已启动：{url}')
+        status, _ = fetch_upstream('search/venue/api?q=CVPR&format=json&h=1')
+    except UpstreamError as e:
+        print(f'✗ 无法连接 dblp：{e}')
+        print('  请检查网络；如果需要代理才能访问 dblp，请先设置 HTTPS_PROXY 再启动。')
+        return
+    if status == 200:
+        print('✓ dblp 连接正常')
+    else:
+        print(f'✗ dblp 返回 HTTP {status}')
+
+
+def main():
+    preferred = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    server, port = start_server(preferred)
+    if port != preferred:
+        print(f'端口 {preferred} 已被其他程序占用（可能是之前的 python3 -m http.server），改用 {port}。')
+    # 用 127.0.0.1 而不是 localhost，避免浏览器连到监听 IPv6 的其他程序
+    url = f'http://127.0.0.1:{port}/'
+    print(f'会议论文速查已启动，请打开：{url}')
     print('按 Ctrl + C 停止。')
+    threading.Thread(target=check_dblp, daemon=True).start()
     try:
         webbrowser.open(url)
     except Exception:

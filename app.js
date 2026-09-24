@@ -205,7 +205,10 @@ const api = (() => {
     throw serverErr || networkErr;
   }
 
-  return { get };
+  // 本地中转不可用：网页不是由 server.py 提供的
+  const localProxyMissing = () => CONFIG.apiBases.some((base, i) => isLocal(base) && disabled.has(i));
+
+  return { get, localProxyMissing };
 })();
 
 // 本地缓存（venue 搜索和年份列表），失败时静默跳过
@@ -476,6 +479,14 @@ function setStatus(message, kind = 'info') {
 
 function errorMessage(err) {
   if (err && err.network) {
+    if (location.protocol === 'file:') {
+      return '当前是直接打开的 index.html 文件，浏览器会拦截对 dblp 的请求。'
+        + '请在项目目录运行 python3 server.py，然后打开终端里显示的地址。';
+    }
+    if (api.localProxyMissing() && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+      return `当前页面（${location.host}）不是由 server.py 提供的，可能是之前的 python3 -m http.server 还在运行。`
+        + '请关掉它，重新运行 python3 server.py，然后打开终端里显示的地址（以 http://127.0.0.1 开头）。';
+    }
     return '浏览器无法直接访问 dblp（通常是跨域限制）。本地使用请在项目目录运行 python3 server.py，'
       + '然后打开它显示的地址；在线部署请参考 README 配置代理。';
   }

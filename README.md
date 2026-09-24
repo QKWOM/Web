@@ -19,7 +19,7 @@
 python3 server.py
 ```
 
-会自动打开浏览器，访问 <http://localhost:8000>；按 `Ctrl + C` 停止。端口被占用时可以换一个：`python3 server.py 8080`。
+会自动打开浏览器，地址以终端里显示的为准（默认 <http://127.0.0.1:8000>，端口被占用时会自动换一个）。终端里还会显示 dblp 是否连接正常。按 `Ctrl + C` 停止。
 
 > 请不要用 `python3 -m http.server` 或直接双击 `index.html` 打开：浏览器通常会因为跨域限制拦截对 dblp 的请求，页面会提示“浏览器无法直接访问 dblp”。`server.py` 会在本机代为请求 dblp，从而绕过这个限制。
 
