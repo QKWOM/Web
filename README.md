@@ -2,7 +2,7 @@
 
 输入会议名称（如 `CVPR`、`NeurIPS`、`ACL`），按年份列出该会议每篇论文的链接。数据来自 [dblp](https://dblp.org)。
 
-纯静态网页（HTML + CSS + JavaScript），不需要后端，也不需要安装依赖。
+网页本身是纯静态的（HTML + CSS + JavaScript）。本地使用时，自带的 `server.py` 负责提供网页并代为请求 dblp，只用到 Python 标准库，不需要安装任何依赖。
 
 ## 功能
 
@@ -16,10 +16,12 @@
 ## 本地运行
 
 ```bash
-python3 -m http.server 8000
+python3 server.py
 ```
 
-然后在浏览器打开 <http://localhost:8000>。
+会自动打开浏览器，访问 <http://localhost:8000>；按 `Ctrl + C` 停止。端口被占用时可以换一个：`python3 server.py 8080`。
+
+> 请不要用 `python3 -m http.server` 或直接双击 `index.html` 打开：浏览器通常会因为跨域限制拦截对 dblp 的请求，页面会提示“浏览器无法直接访问 dblp”。`server.py` 会在本机代为请求 dblp，从而绕过这个限制。
 
 ## 部署到 GitHub Pages
 
@@ -28,9 +30,11 @@ python3 -m http.server 8000
 3. 选择要发布的分支和 `/ (root)` 目录，保存
 4. 等一两分钟后，访问页面上显示的网址
 
+GitHub Pages 只能放静态文件，没法运行 `server.py`。如果在线访问时提示“浏览器无法直接访问 dblp”，需要按下文部署一个 Cloudflare Worker 做中转。
+
 ## 工作原理
 
-网页在浏览器中直接调用 dblp 的公开 API：
+网页调用 dblp 的公开 API（本地使用时经 `server.py` 转发）：
 
 | 步骤 | 请求 |
 | --- | --- |
@@ -40,21 +44,26 @@ python3 -m http.server 8000
 
 请求会自动排队，两次请求至少间隔 0.4 秒，避免给 dblp 造成压力。遇到限流（HTTP 429）会等待后重试。
 
-## 如果提示“无法连接 dblp”
+## 连接 dblp 失败时
 
 网页会依次尝试：
 
-1. 直接请求 `dblp.org`
-2. 请求官方镜像 `dblp.uni-trier.de`
+1. `server.py` 提供的本地中转（`/dblp-proxy/`，只在用 `server.py` 启动时存在）
+2. 浏览器直接请求 `dblp.org`，再试官方镜像 `dblp.uni-trier.de`
 3. 改用 JSONP 方式请求
 
-如果都失败，可能是浏览器拦截了跨域请求，或者当前网络访问不了 dblp。这时可以部署 [`proxy/cloudflare-worker.js`](proxy/cloudflare-worker.js) 作为中转：
+常见提示：
+
+- **“浏览器无法直接访问 dblp”**：没有用 `server.py` 启动，浏览器又拦截了跨域请求。本地请改用 `python3 server.py`；在线部署请配置下面的 Cloudflare Worker。
+- **“本地服务器也无法连接 dblp”**：本机网络访问不了 dblp。先确认浏览器能打开 <https://dblp.org>；如果需要代理才能访问，`server.py` 会使用系统代理设置，也可以在启动前设置 `HTTPS_PROXY` 环境变量。
+
+在线部署时的中转：部署 [`proxy/cloudflare-worker.js`](proxy/cloudflare-worker.js)。
 
 1. 在 Cloudflare 控制台新建一个 Worker，把该文件内容粘贴进去并部署
 2. 把 Worker 地址加到 `app.js` 里 `CONFIG.apiBases` 的最前面：
 
    ```js
-   apiBases: ['https://你的-worker.workers.dev', 'https://dblp.org', 'https://dblp.uni-trier.de'],
+   apiBases: ['https://你的-worker.workers.dev', 'dblp-proxy', 'https://dblp.org', 'https://dblp.uni-trier.de'],
    ```
 
 ## 已知限制

@@ -1,10 +1,12 @@
 'use strict';
 
 const CONFIG = {
-  // dblp API 地址，按顺序尝试（第二个是 dblp 官方镜像）。
-  // 如果浏览器无法直接访问 dblp，可以部署 proxy/cloudflare-worker.js，
-  // 然后把它的地址放到最前面，例如 'https://dblp-proxy.xxx.workers.dev'。
-  apiBases: ['https://dblp.org', 'https://dblp.uni-trier.de'],
+  // dblp API 地址，按顺序尝试：
+  // - 'dblp-proxy'：server.py 提供的本地中转，用 python3 server.py 启动时可用
+  // - dblp 官网和官方镜像：浏览器直接访问，可能被跨域限制拦截
+  // 在线部署时，可以把 proxy/cloudflare-worker.js 的地址放到最前面，
+  // 例如 'https://dblp-proxy.xxx.workers.dev'。
+  apiBases: ['dblp-proxy', 'https://dblp.org', 'https://dblp.uni-trier.de'],
   pageSize: 1000, // dblp 单次最多返回 1000 条
   maxOffset: 10000, // dblp 搜索结果最多翻到第 10000 条
   minGapMs: 400, // 两次请求之间的最小间隔，避免给 dblp 造成压力
@@ -71,6 +73,12 @@ const api = (() => {
   let lastAt = 0;
   let queue = Promise.resolve();
   let jsonpSeq = 0;
+  // 相对地址是和网页同源的中转服务；没有中转服务（404）或直接打开文件时跳过
+  const isLocal = (base) => !/^https?:\/\//i.test(base);
+  const disabled = new Set();
+  if (location.protocol === 'file:') {
+    CONFIG.apiBases.forEach((base, i) => isLocal(base) && disabled.add(i));
+  }
 
   // 让所有请求排队，并保持最小间隔
   function throttle() {
@@ -94,7 +102,15 @@ const api = (() => {
     } catch (e) {
       throw new ApiError('无法连接 dblp', { network: true });
     }
-    if (!res.ok) throw new ApiError(`dblp 返回错误（HTTP ${res.status}）`, { status: res.status });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        detail = (await res.json()).error || ''; // server.py 会返回具体原因
+      } catch (e) {
+        /* 不是 JSON */
+      }
+      throw new ApiError(detail || `dblp 返回错误（HTTP ${res.status}）`, { status: res.status });
+    }
     try {
       return await res.json();
     } catch (e) {
@@ -143,24 +159,35 @@ const api = (() => {
     if (memo.has(key)) return memo.get(key);
 
     const bases = CONFIG.apiBases;
-    let lastErr = new ApiError('无法连接 dblp', { network: true });
+    let networkErr = new ApiError('无法连接 dblp', { network: true });
+    let serverErr = null; // 有状态码的错误比网络错误更能说明问题，优先报告
     for (let attempt = 0; attempt < 3; attempt++) {
       let allNetwork = true;
       let busy = false;
       for (let i = 0; i < bases.length; i++) {
         const index = (preferred + i) % bases.length;
+        const base = bases[index];
+        if (disabled.has(index) || (transport === 'jsonp' && isLocal(base))) continue;
         await throttle();
         try {
           const data = transport === 'jsonp'
-            ? await viaJsonp(buildUrl(bases[index], path, { ...params, format: 'jsonp' }))
-            : await viaFetch(buildUrl(bases[index], path, { ...params, format: 'json' }));
+            ? await viaJsonp(buildUrl(base, path, { ...params, format: 'jsonp' }))
+            : await viaFetch(buildUrl(base, path, { ...params, format: 'json' }));
           const result = checkResult(data);
           preferred = index;
           memo.set(key, result);
           return result;
         } catch (err) {
-          lastErr = err;
-          if (!err.network) allNetwork = false;
+          if (isLocal(base) && (err.status === 404 || err.status === 501 || err.network)) {
+            disabled.add(index); // 网页不是用 server.py 启动的，没有本地中转
+            continue;
+          }
+          if (err.network) {
+            networkErr = err;
+          } else {
+            allNetwork = false;
+            serverErr = err;
+          }
           if (err.status === 429) { busy = true; break; }
         }
       }
@@ -168,14 +195,14 @@ const api = (() => {
         await sleep(4000 * (attempt + 1)); // 被限流，稍后重试
       } else if (allNetwork && transport === 'fetch') {
         transport = 'jsonp'; // 很可能是跨域被拦截，改用 JSONP
-      } else if (lastErr.status >= 500) {
+      } else if (serverErr && (serverErr.status === 500 || serverErr.status === 503)) {
         await sleep(1500 * (attempt + 1));
       } else {
         break;
       }
     }
-    if (lastErr.network) transport = 'fetch';
-    throw lastErr;
+    if (transport === 'jsonp') transport = 'fetch';
+    throw serverErr || networkErr;
   }
 
   return { get };
@@ -449,7 +476,8 @@ function setStatus(message, kind = 'info') {
 
 function errorMessage(err) {
   if (err && err.network) {
-    return '无法连接 dblp。请检查网络后重试；如果一直失败，可能是浏览器拦截了跨域请求，请参考 README 部署代理。';
+    return '浏览器无法直接访问 dblp（通常是跨域限制）。本地使用请在项目目录运行 python3 server.py，'
+      + '然后打开它显示的地址；在线部署请参考 README 配置代理。';
   }
   if (err && err.status === 429) return 'dblp 暂时限制了访问频率，请稍等一会儿再试。';
   return (err && err.message) || '出错了，请稍后重试。';
