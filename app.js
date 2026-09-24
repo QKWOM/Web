@@ -305,6 +305,38 @@ function mainLink(p) {
   return p.links[0] || p.dblp || '';
 }
 
+// 从开放获取站点的论文页地址推出 PDF 的直接下载地址；推不出来（例如需要订阅的出版社）返回空
+const PDF_RULES = [
+  // CVF（CVPR、ICCV、WACV）：…/html/xxx_paper.html → …/papers/xxx_paper.pdf
+  [/^https:\/\/openaccess\.thecvf\.com\/(.+)\/html\/([^/]+)\.html$/i, (m) => `https://openaccess.thecvf.com/${m[1]}/papers/${m[2]}.pdf`],
+  [/^https:\/\/arxiv\.org\/abs\/(.+)$/i, (m) => `https://arxiv.org/pdf/${m[1]}`],
+  [/^https:\/\/openreview\.net\/forum\?id=([^&#]+)/i, (m) => `https://openreview.net/pdf?id=${m[1]}`],
+  // ACL Anthology：2024.acl-long.1 或 P19-1001 这样的论文编号
+  [/^https:\/\/(?:www\.)?(?:aclanthology\.org|aclweb\.org\/anthology)\/(\d{4}\.[\w-]+\.\d+|[A-Z]\d{2}-\d{4})\/?$/i,
+    (m) => `https://aclanthology.org/${m[1]}.pdf`],
+  // PMLR（ICML、CoRL、AISTATS 等）：v235/smith24a.html → v235/smith24a/smith24a.pdf
+  [/^https:\/\/proceedings\.mlr\.press\/(v\d+)\/([^/]+)\.html$/i, (m) => `https://proceedings.mlr.press/${m[1]}/${m[2]}/${m[2]}.pdf`],
+  // NeurIPS：…/hash/<id>-Abstract-Conference.html → …/file/<id>-Paper-Conference.pdf
+  [/^https:\/\/((?:proceedings|papers)\.(?:neurips|nips)\.cc)\/(.+)\/hash\/([0-9a-f]+)-Abstract(-\w+)?\.html$/i,
+    (m) => `https://${m[1]}/${m[2]}/file/${m[3]}-Paper${m[4] || ''}.pdf`],
+  [/^https:\/\/(?:www\.)?ijcai\.org\/proceedings\/(\d{4})\/(\d+)$/i,
+    (m) => `https://www.ijcai.org/proceedings/${m[1]}/${m[2].padStart(4, '0')}.pdf`],
+  [/^https:\/\/(?:www\.)?jmlr\.org\/papers\/v(\d+)\/([^/]+)\.html$/i, (m) => `https://jmlr.org/papers/volume${m[1]}/${m[2]}/${m[2]}.pdf`],
+  [/^https:\/\/(?:www\.)?isca-archive\.org\/(.+)\.html$/i, (m) => `https://www.isca-archive.org/${m[1]}.pdf`],
+];
+
+function pdfLink(links) {
+  for (const link of links) {
+    const url = link.replace(/^http:\/\//i, 'https://');
+    if (/\.pdf($|[?#])/i.test(url)) return url; // 本身就是 PDF（例如 PVLDB）
+    for (const [pattern, build] of PDF_RULES) {
+      const m = pattern.exec(url);
+      if (m) return build(m);
+    }
+  }
+  return '';
+}
+
 // 名称及其别名（小写）
 function withAliases(names) {
   const all = new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean));
@@ -488,6 +520,7 @@ ORDER BY ?title`);
       year: String(year),
       venue: venueLabel(venue),
       links,
+      pdf: pdfLink(links),
       dblp: safeUrl(val(row, 'publ')),
     };
     (/#Editorship\b/.test(val(row, 'types')) ? proceedings : papers).push(paper);
@@ -536,7 +569,6 @@ function openreviewPaper(note, venue, year) {
   const id = encodeURIComponent(String(note.id || ''));
   const forum = encodeURIComponent(String(note.forum || note.id || ''));
   const links = [`https://openreview.net/forum?id=${forum}`];
-  if (field('pdf')) links.push(`https://openreview.net/pdf?id=${id}`);
   return {
     id: String(note.id || ''),
     title: latexToUnicode(String(field('title') || '').trim()).replace(/\s*\.$/, ''),
@@ -544,6 +576,7 @@ function openreviewPaper(note, venue, year) {
     year: String(year),
     venue: venueLabel(venue),
     links,
+    pdf: field('pdf') ? `https://openreview.net/pdf?id=${id}` : '',
     dblp: '',
   };
 }
@@ -916,9 +949,12 @@ function addPapers({ papers, proceedings, hasMore }) {
     const links = p.links.map((u) => el('a', { href: u, target: '_blank', rel: 'noopener', text: linkLabel(u) }));
     if (p.dblp) links.push(el('a', { href: p.dblp, target: '_blank', rel: 'noopener', text: 'dblp' }));
     const li = el('li', { class: 'paper' }, [
-      href
-        ? el('a', { class: 'paper-title', href, target: '_blank', rel: 'noopener', text: p.title })
-        : el('span', { class: 'paper-title nolink', text: p.title }),
+      el('div', { class: 'paper-head' }, [
+        href
+          ? el('a', { class: 'paper-title', href, target: '_blank', rel: 'noopener', text: p.title })
+          : el('span', { class: 'paper-title nolink', text: p.title }),
+        p.pdf ? pdfButton(p) : null,
+      ]),
       p.authors.length ? el('div', { class: 'paper-authors', text: p.authors.join(', ') }) : null,
       links.length ? el('div', { class: 'paper-links' }, links) : null,
     ]);
@@ -932,6 +968,20 @@ function addPapers({ papers, proceedings, hasMore }) {
   const pageEmpty = !papers.length && !proceedings.length;
   paging.hasMore = !pageEmpty && (paging.total ? state.rows.length < paging.total : hasMore);
   updateCount();
+}
+
+function pdfButton(p) {
+  const button = el('a', {
+    class: 'pdf-btn',
+    href: p.pdf,
+    target: '_blank',
+    rel: 'noopener',
+    title: '下载 PDF',
+    'aria-label': `下载 PDF：${p.title}`,
+  });
+  button.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  button.append('PDF');
+  return button;
 }
 
 function visibleRows() {
@@ -978,11 +1028,11 @@ function csvCell(v) {
 function exportCsv() {
   const rows = visibleRows();
   if (!rows.length) return;
-  const header = ['title', 'authors', 'year', 'venue', 'link', 'all_links', 'dblp'];
+  const header = ['title', 'authors', 'year', 'venue', 'link', 'pdf', 'all_links', 'dblp'];
   const lines = [header.join(',')];
   for (const { paper: p } of rows) {
     lines.push([
-      p.title, p.authors.join('; '), p.year, p.venue, mainLink(p), p.links.join(' '), p.dblp,
+      p.title, p.authors.join('; '), p.year, p.venue, mainLink(p), p.pdf, p.links.join(' '), p.dblp,
     ].map(csvCell).join(','));
   }
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });

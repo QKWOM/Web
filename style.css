@@ -290,10 +290,32 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 }
 .paper:last-child { border-bottom: 0; }
 .paper::marker { color: var(--muted); font-size: 13px; }
+.paper-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
 .paper-title {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+.pdf-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.pdf-btn:hover { background: var(--accent-hover); color: var(--on-accent); text-decoration: none; }
 .paper-title.nolink { color: var(--text); }
 .paper-authors {
   margin-top: 2px;
