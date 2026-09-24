@@ -6,7 +6,7 @@
 
 ## 功能
 
-- 按会议或期刊的名称、缩写搜索，同名的会议、workshop 和期刊会列出来供选择；TPAMI、TNNLS 这类和 dblp 标识不一致的常用缩写也能直接搜
+- 按会议或期刊的名称、缩写搜索，拼错时（如 ICRL）会提示可能的名称（ICLR、ICRA）；同名的会议、workshop 和期刊会列出来供选择；TPAMI、TNNLS 这类和 dblp 标识不一致的常用缩写也能直接搜
 - 列出所有年份及每年的论文数量，点击年份加载论文；每次加载 1000 篇，更多的点“加载更多”
 - 会议中 dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
 - 每篇论文显示标题、作者和链接：开放获取页面（CVF、OpenReview、ACL Anthology、PMLR 等）优先，另附 DOI 和 dblp 链接
@@ -53,9 +53,10 @@ GitHub Pages 只能放静态文件，没法运行 `server.py`。如果在线访�
 
 dblp 通常要在会议结束几个月后才收录论文集。选中一个会议（期刊不需要）后，网页会在 OpenReview 的会场列表（`https://api2.openreview.net/groups?id=venues`）里找同名会议的主会场，例如 `robot-learning.org/CoRL/2025/Conference`、`ICLR.cc/2025/Conference`，把 dblp 缺少的年份补上。点这些年份时，列出 OpenReview 上该会场已录用的论文（`/notes?content.venueid=…`），每篇附论文页和 PDF 链接。
 
+- CoRL、ICLR、NeurIPS、ICML、COLM、AISTATS、UAI 的会场 ID 前缀是已知的，直接查询最近几年的主会场；其他会议从会场列表里匹配。
 - 只使用主会场，不包括 workshop、Datasets and Benchmarks 等分会场。
 - 有的会议只用 OpenReview 审稿，不公开论文（例如 CVPR）。这类会场查不到已录用的论文，不会显示。
-- OpenReview 连不上时不影响 dblp 的数据，只是少了补充的年份。
+- OpenReview 连不上时不影响 dblp 的数据，只是少了补充的年份，年份按钮下方会显示原因。
 
 ### 年份的计算
 

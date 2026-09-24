@@ -175,6 +175,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   .status.loading::before { animation: none; }
 }
 
+.suggest { margin: -4px 0 16px; }
+
 /* Cards */
 .card {
   margin-bottom: 20px;
@@ -249,6 +251,12 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 .year-count { font-size: 12px; color: var(--muted); }
 .year-source { font-size: 11px; color: var(--accent); }
 .year-btn[aria-pressed="true"] .year-source { color: inherit; opacity: 0.85; }
+
+.years-note {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: 13px;
+}
 
 .year-form {
   display: flex;

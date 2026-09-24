@@ -24,6 +24,7 @@
 
   <main class="wrap">
     <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+    <div id="suggest" class="chip-row suggest" hidden></div>
 
     <section id="venues-section" class="card" hidden>
       <h2>匹配的会议和期刊</h2>
@@ -36,6 +37,7 @@
         <a id="venue-link" class="subtle-link" target="_blank" rel="noopener">在 dblp 查看</a>
       </div>
       <div id="years" class="years"></div>
+      <p id="years-note" class="years-note" hidden></p>
       <form id="year-form" class="year-form">
         <label for="year-input">其他年份</label>
         <input id="year-input" type="number" inputmode="numeric" min="1950" max="2100" placeholder="如 2019" required>

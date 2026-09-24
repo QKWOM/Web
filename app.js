@@ -41,6 +41,29 @@ const ALIAS_GROUPS = [
   ['aij', 'ai'],
 ];
 
+// 在 OpenReview 上发布论文的常见会议：主会场 ID 为“前缀/年份/Conference”
+const OPENREVIEW_PREFIXES = {
+  iclr: 'ICLR.cc',
+  neurips: 'NeurIPS.cc',
+  nips: 'NeurIPS.cc',
+  icml: 'ICML.cc',
+  corl: 'robot-learning.org/CoRL',
+  colm: 'colmweb.org/COLM',
+  aistats: 'aistats.org/AISTATS',
+  uai: 'auai.org/UAI',
+};
+
+// 搜不到时用来提示“你是不是要找”的常见缩写
+const KNOWN_ACRONYMS = [
+  ...Object.values(POPULAR).flat(),
+  'ICRA', 'IROS', 'RSS', 'CoRL', 'AISTATS', 'UAI', 'COLT', 'COLM', 'WACV', 'BMVC', 'MICCAI', 'ICASSP',
+  'INTERSPEECH', 'ECAI', 'WSDM', 'CIKM', 'RecSys', 'ICDE', 'VLDB', 'EDBT', 'OSDI', 'SOSP', 'NSDI', 'EuroSys',
+  'PLDI', 'POPL', 'OOPSLA', 'FSE', 'ASE', 'ISSTA', 'NDSS', 'CRYPTO', 'EUROCRYPT', 'STOC', 'FOCS', 'SODA',
+  'ICALP', 'UIST', 'CSCW', 'MobiCom', 'SIGCOMM', 'INFOCOM', 'DAC', 'ISCA', 'MICRO', 'HPCA', 'ASPLOS',
+  'ICDM', 'SDM', 'EACL', 'COLING', 'ICCAD', 'SIGGRAPH', 'ICLR', 'IJCV', 'TIP', 'TNNLS', 'TCSVT', 'TRO',
+  'RAL', 'IJRR', 'TOIS', 'TKDD', 'TIST', 'AIJ', 'JAIR',
+];
+
 // 优先作为论文主链接的站点（通常可以直接看到 PDF）
 const OPEN_HOSTS = [
   'openaccess.thecvf.com', 'openreview.net', 'aclanthology.org', 'proceedings.mlr.press',
@@ -581,6 +604,18 @@ function openreviewPaper(note, venue, year) {
   };
 }
 
+// 可能对应 dblp 所缺年份的 OpenReview 主会场
+async function openreviewCandidates(venue) {
+  const names = withAliases([venue.acronym || '', venue.stream.split('/').pop()]);
+  const prefix = names.map((n) => OPENREVIEW_PREFIXES[n]).find(Boolean);
+  if (prefix) {
+    // 已知的会议直接试最近几年，不用下载完整的会场列表
+    const now = new Date().getFullYear();
+    return [now + 1, now, now - 1, now - 2].map((year) => ({ year, venueid: `${prefix}/${year}/Conference` }));
+  }
+  return matchOpenReviewVenues(venue, await openreviewVenueIds());
+}
+
 // 确认这一年在 OpenReview 上确实有已录用的论文（有的会议只用 OpenReview 审稿，论文不公开），顺便拿到篇数
 async function openreviewAcceptedCount(venueid) {
   const params = new URLSearchParams({ 'content.venueid': venueid, limit: 1 });
@@ -697,6 +732,7 @@ async function runSearch(query, restore = {}) {
   state.year = null;
   const isCurrent = nextToken('search', 'venue', 'year');
   hideFrom('venues-section');
+  showSuggestions([]);
   syncUrl();
   setStatus(`正在 dblp 中搜索“${query}”…`, 'loading');
 
@@ -711,7 +747,10 @@ async function runSearch(query, restore = {}) {
 
   state.venues = venues;
   if (!venues.length) {
-    setStatus(`没有找到名称包含“${query}”的会议或期刊，换个写法试试（例如用缩写 CVPR、TPAMI，或英文全称）。`, 'error');
+    const guesses = didYouMean(query);
+    setStatus(`没有找到名称包含“${query}”的会议或期刊，`
+      + (guesses.length ? '是不是拼错了？' : '换个写法试试（例如用缩写 CVPR、TPAMI，或英文全称）。'), 'error');
+    showSuggestions(guesses);
     return;
   }
   renderVenues();
@@ -725,6 +764,50 @@ async function runSearch(query, restore = {}) {
     selectVenue(venues[0]);
   } else {
     setStatus(`找到 ${venues.length} 个匹配项，请选择一个。`);
+  }
+}
+
+// 编辑距离（允许相邻字母对调），用来猜测拼错的缩写，例如 ICRL → ICLR
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+function sameLetters(a, b) {
+  const key = (x) => [...x.toLowerCase()].sort().join('');
+  return key(a) === key(b) ? 1 : 0;
+}
+
+function didYouMean(query) {
+  const q = query.trim().toLowerCase();
+  const limit = q.length <= 5 ? 1 : 2;
+  const seen = new Set();
+  return KNOWN_ACRONYMS
+    .filter((name) => !seen.has(name.toLowerCase()) && seen.add(name.toLowerCase()))
+    .map((name) => ({ name, d: editDistance(q, name.toLowerCase()) }))
+    .filter((x) => x.d > 0 && x.d <= limit)
+    // 距离相同时，字母完全相同（只是顺序不同）的排前面
+    .sort((a, b) => a.d - b.d || sameLetters(q, b.name) - sameLetters(q, a.name))
+    .slice(0, 5)
+    .map((x) => x.name);
+}
+
+function showSuggestions(names) {
+  const box = $('suggest');
+  box.textContent = '';
+  box.hidden = !names.length;
+  if (!names.length) return;
+  box.append(el('span', { class: 'chip-label', text: '你是不是要找：' }));
+  for (const name of names) {
+    box.append(el('button', { type: 'button', class: 'chip', text: name, onclick: () => runSearch(name) }));
   }
 }
 
@@ -772,6 +855,7 @@ async function selectVenue(venue, restore = {}) {
   $('venue-title').textContent = showAcronym ? `${venue.acronym} · ${venue.name}` : venue.name;
   $('venue-link').href = venue.url;
   $('years').textContent = '';
+  showYearsNote('');
   $('years-section').hidden = false;
   setStatus(`正在获取 ${venueLabel(venue)} 的年份列表…`, 'loading');
 
@@ -798,7 +882,7 @@ async function selectVenue(venue, restore = {}) {
   const extra = [];
   if (isConference) try {
     const known = new Set(state.years.map((y) => y.year));
-    const candidates = matchOpenReviewVenues(venue, await openreviewVenueIds()).filter((y) => !known.has(y.year));
+    const candidates = (await openreviewCandidates(venue)).filter((y) => !known.has(y.year));
     for (const candidate of candidates) {
       if (!isCurrent()) return;
       const count = await openreviewAcceptedCount(candidate.venueid);
@@ -806,6 +890,9 @@ async function selectVenue(venue, restore = {}) {
     }
   } catch (err) {
     console.warn('OpenReview 暂时不可用：', err);
+    if (isCurrent()) {
+      showYearsNote(`OpenReview 查询失败，dblp 尚未收录的最新年份可能缺失。原因：${errorMessage(err)}`);
+    }
   }
   if (!isCurrent()) return;
   if (extra.length) {
@@ -826,6 +913,12 @@ async function selectVenue(venue, restore = {}) {
       : '';
     setStatus(`${venueLabel(venue)} 共有 ${state.years.length} 个年份，点击年份查看论文列表。${note}`);
   }
+}
+
+function showYearsNote(message) {
+  const note = $('years-note');
+  note.textContent = message;
+  note.hidden = !message;
 }
 
 function renderYears() {
