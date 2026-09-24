@@ -25,10 +25,11 @@ import urllib.request
 import webbrowser
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PREFIX = '/dblp-proxy/'
-ALLOWED_PATHS = {'sparql'}
 # dblp 官方 SPARQL 服务，以及弗莱堡大学 QLever 上的 dblp 数据（备用）
 UPSTREAMS = ['https://sparql.dblp.org/sparql', 'https://qlever.cs.uni-freiburg.de/api/dblp']
+# OpenReview API，用来补充 dblp 尚未收录的年份
+OPENREVIEW = 'https://api2.openreview.net'
+OPENREVIEW_PATHS = {'notes', 'groups'}
 TIMEOUT = 60
 USER_AGENT = 'conference-paper-finder (local)'
 
@@ -39,24 +40,20 @@ class UpstreamError(Exception):
         self.network_only = network_only
 
 
-def fetch_with_curl(url):
+def fetch_with_curl(url, accept):
     """部分 macOS 上的 Python 缺少根证书，这时改用系统自带的 curl。"""
     if not shutil.which('curl'):
         return None
     result = subprocess.run(
-        ['curl', '-sS', '--fail', '--max-time', str(TIMEOUT), '-A', USER_AGENT,
-         '-H', 'Accept: application/sparql-results+json', url],
+        ['curl', '-sS', '--fail', '--max-time', str(TIMEOUT), '-A', USER_AGENT, '-H', f'Accept: {accept}', url],
         capture_output=True,
     )
     return result.stdout if result.returncode == 0 else None
 
 
-def http_get(url):
+def http_get(url, accept='application/sparql-results+json'):
     """返回 (状态码, 内容, Content-Type)；连不上时抛出 UpstreamError。"""
-    request = urllib.request.Request(url, headers={
-        'User-Agent': USER_AGENT,
-        'Accept': 'application/sparql-results+json',
-    })
+    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': accept})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             body = response.read()
@@ -120,10 +117,28 @@ def fetch_upstream(query_string):
     raise UpstreamError('；'.join(errors), network_only)
 
 
-def upstream_error_message(e):
+def fetch_openreview(path, query_string):
+    """请求 OpenReview API，返回 (状态码, 发给浏览器的 JSON 内容)。"""
+    try:
+        status, body, content_type = http_get(f'{OPENREVIEW}/{path}?{query_string}', 'application/json')
+    except UpstreamError as e:
+        raise UpstreamError(f'{OPENREVIEW}: {e}') from None
+    if status != 200:
+        return status, body
+    try:
+        data = parse_json(body)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or not ('notes' in data or 'groups' in data):
+        raise UpstreamError(f'{OPENREVIEW}: 返回的不是 API 数据（Content-Type: {content_type or "未知"}，'
+                            f'开头内容：{preview(body)}）', network_only=False)
+    return 200, json.dumps(data, ensure_ascii=False).encode('utf-8')
+
+
+def upstream_error_message(e, name='dblp 查询服务'):
     if e.network_only:
-        return f'本地服务器也无法连接 dblp 查询服务，请检查网络（例如是否需要开代理）。详情：{e}'
-    return f'dblp 查询服务返回的数据无法使用。详情：{e}'
+        return f'本地服务器也无法连接 {name}，请检查网络（例如是否需要开代理）。详情：{e}'
+    return f'{name} 返回的数据无法使用。详情：{e}'
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -131,20 +146,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=ROOT, **kwargs)
 
     def do_GET(self):
-        if self.path.startswith(PREFIX):
-            self.proxy()
+        route, _, rest = self.path.lstrip('/').partition('/')
+        if route in ('dblp-proxy', 'openreview-proxy'):
+            self.proxy(route, *rest.partition('?')[::2])
         else:
             super().do_GET()
 
-    def proxy(self):
-        path, _, query_string = self.path[len(PREFIX):].partition('?')
-        if path not in ALLOWED_PATHS:
-            self.send_json(404, {'error': 'not found'})
-            return
+    def proxy(self, route, path, query_string):
         try:
-            status, body, _ = fetch_upstream(query_string)
+            if route == 'dblp-proxy' and path == 'sparql':
+                status, body, _ = fetch_upstream(query_string)
+            elif route == 'openreview-proxy' and path in OPENREVIEW_PATHS:
+                status, body = fetch_openreview(path, query_string)
+            else:
+                self.send_json(404, {'error': 'not found'})
+                return
         except UpstreamError as e:
-            message = upstream_error_message(e)
+            name = 'dblp 查询服务' if route == 'dblp-proxy' else 'OpenReview'
+            message = upstream_error_message(e, name)
             self.log_message('%s', message)
             self.send_json(502, {'error': message})
             return
@@ -194,20 +213,29 @@ def start_server(preferred_port):
 
 
 def check_dblp():
-    """启动时试着查询一次 dblp，把结果打印出来，方便排查网络问题。"""
+    """启动时试着查询一次 dblp 和 OpenReview，把结果打印出来，方便排查网络问题。"""
     query = urllib.parse.urlencode({'query': (
         'SELECT ?title WHERE { <https://dblp.org/streams/conf/cvpr> '
         '<https://dblp.org/rdf/schema#streamTitle> ?title } LIMIT 1'
     )})
     try:
         status, body, base = fetch_upstream(query)
+        if status == 200:
+            print(f'✓ dblp 查询服务连接正常（{base}）')
+        else:
+            print(f'✗ dblp 查询服务返回 HTTP {status}：{preview(body)}')
     except UpstreamError as e:
         print(f'✗ {upstream_error_message(e)}')
-        return
-    if status == 200:
-        print(f'✓ dblp 查询服务连接正常（{base}）')
-    else:
-        print(f'✗ dblp 查询服务返回 HTTP {status}：{preview(body)}')
+
+    query = urllib.parse.urlencode({'content.venueid': 'ICLR.cc/2025/Conference', 'limit': 1})
+    try:
+        status, body = fetch_openreview('notes', query)
+        if status == 200:
+            print('✓ OpenReview 连接正常（用于补充 dblp 尚未收录的年份）')
+        else:
+            print(f'✗ OpenReview 返回 HTTP {status}：{preview(body)}')
+    except UpstreamError as e:
+        print(f'✗ {upstream_error_message(e, "OpenReview")}（dblp 尚未收录的年份将无法补充）')
 
 
 def main():

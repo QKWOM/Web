@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>会议论文速查</title>
-  <meta name="description" content="输入会议名称，按年份查看该会议每篇论文的链接。数据来自 dblp。">
+  <meta name="description" content="输入会议名称，按年份查看该会议每篇论文的链接。数据来自 dblp 和 OpenReview。">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232457c5'/%3E%3Cpath d='M9 8h10l4 4v12H9z' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 15h8M12 19h8' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -12,7 +12,7 @@
   <header class="site-header">
     <div class="wrap">
       <h1>会议论文速查</h1>
-      <p class="tagline">输入会议名称，按年份列出每篇论文的链接。数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp</a>。</p>
+      <p class="tagline">输入会议名称，按年份列出每篇论文的链接。数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp</a>，dblp 尚未收录的年份由 <a href="https://openreview.net" target="_blank" rel="noopener">OpenReview</a> 补充。</p>
       <form id="search-form" class="search" role="search">
         <label class="visually-hidden" for="q">会议名称</label>
         <input id="q" name="q" type="search" placeholder="会议名称，如 CVPR、NeurIPS、ACL" autocomplete="off" spellcheck="false" required>
@@ -63,7 +63,7 @@
   </main>
 
   <footer class="wrap footer">
-    论文数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp computer science bibliography</a>（CC0）。论文链接指向出版方、DOI 或开放获取页面。
+    论文数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp computer science bibliography</a>（CC0）和 <a href="https://openreview.net" target="_blank" rel="noopener">OpenReview</a>。论文链接指向出版方、DOI 或开放获取页面。
   </footer>
 
   <script src="app.js"></script>

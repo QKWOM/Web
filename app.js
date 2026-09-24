@@ -10,6 +10,11 @@ const CONFIG = {
     'https://sparql.dblp.org/sparql',
     'https://qlever.cs.uni-freiburg.de/api/dblp',
   ],
+  // OpenReview API：dblp 还没收录的年份（通常是最近一两年）从这里补充
+  openreview: [
+    'openreview-proxy',
+    'https://api2.openreview.net',
+  ],
   minGapMs: 300, // 两次请求之间的最小间隔，避免给服务器造成压力
 };
 
@@ -18,10 +23,10 @@ const POPULAR = [
   'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
 ];
 
-// 常用名称和 dblp 内部标识不一致的会议
-const ALIASES = {
-  neurips: ['nips'],
-};
+// 常用名称和 dblp 内部标识不一致的会议（同一组里的名称视为同一个会议）
+const ALIAS_GROUPS = [
+  ['neurips', 'nips'],
+];
 
 // 优先作为论文主链接的站点（通常可以直接看到 PDF）
 const OPEN_HOSTS = [
@@ -61,7 +66,7 @@ const VENUE_TYPES = {
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/* ---------------- dblp SPARQL 查询 ---------------- */
+/* ---------------- 网络请求 ---------------- */
 
 class ApiError extends Error {
   constructor(message, { status = 0, network = false } = {}) {
@@ -75,53 +80,54 @@ function preview(body) {
   return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 150) || '（空）';
 }
 
-const api = (() => {
+// 所有请求共用一个队列，并保持最小间隔
+let lastRequestAt = 0;
+let requestQueue = Promise.resolve();
+function throttle() {
+  const turn = requestQueue.then(async () => {
+    const wait = lastRequestAt + CONFIG.minGapMs - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastRequestAt = Date.now();
+  });
+  requestQueue = turn;
+  return turn;
+}
+
+// 宽松解析：数据里偶尔有未转义的控制字符或无效的反斜杠转义
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const repaired = text
+      .replace(/[\u0000-\u001f]+/g, ' ')
+      .replace(/\\(.)/g, (m, c) => ('"\\/bfnrtu'.includes(c) ? m : '\\\\' + c));
+    return JSON.parse(repaired);
+  }
+}
+
+// 创建一个数据源的客户端：按顺序尝试多个地址，记住能用的那个
+function createClient({ name, bases, accept, isValid }) {
   const memo = new Map();
   let preferred = 0;
-  let lastAt = 0;
-  let queue = Promise.resolve();
   // 相对地址是和网页同源的中转服务；没有中转服务（404）或直接打开文件时跳过
   const isLocal = (base) => !/^https?:\/\//i.test(base);
   const disabled = new Set();
   if (location.protocol === 'file:') {
-    CONFIG.endpoints.forEach((base, i) => isLocal(base) && disabled.add(i));
-  }
-
-  // 让所有请求排队，并保持最小间隔
-  function throttle() {
-    const turn = queue.then(async () => {
-      const wait = lastAt + CONFIG.minGapMs - Date.now();
-      if (wait > 0) await sleep(wait);
-      lastAt = Date.now();
-    });
-    queue = turn;
-    return turn;
-  }
-
-  // 宽松解析：数据里偶尔有未转义的控制字符或无效的反斜杠转义
-  function parseJson(text) {
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      const repaired = text
-        .replace(/[\u0000-\u001f]+/g, ' ')
-        .replace(/\\(.)/g, (m, c) => ('"\\/bfnrtu'.includes(c) ? m : '\\\\' + c));
-      return JSON.parse(repaired);
-    }
+    bases.forEach((base, i) => isLocal(base) && disabled.add(i));
   }
 
   async function request(url) {
     let res;
     try {
-      res = await fetch(url, { headers: { Accept: 'application/sparql-results+json' } });
+      res = await fetch(url, { headers: { Accept: accept } });
     } catch (e) {
-      throw new ApiError('无法连接 dblp', { network: true });
+      throw new ApiError(`无法连接 ${name}`, { network: true });
     }
     let body;
     try {
       body = await res.text();
     } catch (e) {
-      throw new ApiError('读取 dblp 数据时连接中断', { network: true });
+      throw new ApiError(`读取 ${name} 数据时连接中断`, { network: true });
     }
     let data = null;
     try {
@@ -130,22 +136,23 @@ const api = (() => {
       /* 下面统一处理 */
     }
     if (!res.ok) {
-      // server.py 的错误放在 error 字段，SPARQL 服务（QLever）的放在 exception 字段
-      const detail = data && (data.error || (data.exception && `dblp 查询出错：${data.exception}`));
-      throw new ApiError(detail || `dblp 返回错误（HTTP ${res.status}）：${preview(body)}`, { status: res.status });
+      // server.py 的错误放在 error 字段，SPARQL 服务（QLever）的放在 exception 字段，OpenReview 的放在 message 字段
+      const detail = data && (data.error || (data.exception && `${name} 查询出错：${data.exception}`)
+        || (data.message && `${name} 返回错误：${data.message}`));
+      throw new ApiError(detail || `${name} 返回错误（HTTP ${res.status}）：${preview(body)}`, { status: res.status });
     }
-    if (!data || !data.results || !Array.isArray(data.results.bindings)) {
-      console.error('dblp 返回的内容无法解析：', body.slice(0, 2000));
-      throw new ApiError(`dblp 返回的数据无法解析（开头内容：${preview(body)}）`, { status: res.status });
+    if (!isValid(data)) {
+      console.error(`${name} 返回的内容无法解析：`, body.slice(0, 2000));
+      throw new ApiError(`${name} 返回的数据无法解析（开头内容：${preview(body)}）`, { status: res.status });
     }
-    return data.results.bindings;
+    return data;
   }
 
-  async function query(sparql) {
-    if (memo.has(sparql)) return memo.get(sparql);
+  // suffix 是地址后面的部分，例如 '?query=...' 或 '/notes?...'
+  async function get(suffix) {
+    if (memo.has(suffix)) return memo.get(suffix);
 
-    const bases = CONFIG.endpoints;
-    let networkErr = new ApiError('无法连接 dblp', { network: true });
+    let networkErr = new ApiError(`无法连接 ${name}`, { network: true });
     let serverErr = null; // 有状态码的错误比网络错误更能说明问题，优先报告第一个
     for (let attempt = 0; attempt < 3; attempt++) {
       let busy = false;
@@ -155,10 +162,10 @@ const api = (() => {
         if (disabled.has(index)) continue;
         await throttle();
         try {
-          const rows = await request(`${base}?query=${encodeURIComponent(sparql)}`);
+          const data = await request(base + suffix);
           preferred = index;
-          memo.set(sparql, rows);
-          return rows;
+          memo.set(suffix, data);
+          return data;
         } catch (err) {
           if (isLocal(base) && (err.status === 404 || err.status === 501 || err.network)) {
             disabled.add(index); // 网页不是用 server.py 启动的，没有本地中转
@@ -176,10 +183,29 @@ const api = (() => {
   }
 
   // 本地中转不可用：网页不是由 server.py 提供的
-  const localProxyMissing = () => CONFIG.endpoints.some((base, i) => isLocal(base) && disabled.has(i));
+  const localProxyMissing = () => bases.some((base, i) => isLocal(base) && disabled.has(i));
 
-  return { query, localProxyMissing };
-})();
+  return { get, localProxyMissing };
+}
+
+const dblp = createClient({
+  name: 'dblp',
+  bases: CONFIG.endpoints,
+  accept: 'application/sparql-results+json',
+  isValid: (d) => !!(d && d.results && Array.isArray(d.results.bindings)),
+});
+
+const openreview = createClient({
+  name: 'OpenReview',
+  bases: CONFIG.openreview,
+  accept: 'application/json',
+  isValid: (d) => !!(d && (Array.isArray(d.notes) || Array.isArray(d.groups))),
+});
+
+async function sparql(query) {
+  const data = await dblp.get(`?query=${encodeURIComponent(query)}`);
+  return data.results.bindings;
+}
 
 // 本地缓存（会议搜索和年份列表），失败时静默跳过
 const store = {
@@ -246,6 +272,7 @@ function hostOf(u) {
 }
 
 function linkLabel(u) {
+  if (/^https:\/\/openreview\.net\/pdf\b/.test(u)) return 'PDF';
   const host = hostOf(u);
   return HOST_LABELS[host] || host.replace(/^www\./, '') || '链接';
 }
@@ -265,9 +292,17 @@ function mainLink(p) {
   return p.links[0] || p.dblp || '';
 }
 
+// 名称及其别名（小写）
+function withAliases(names) {
+  const all = new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean));
+  for (const group of ALIAS_GROUPS) {
+    if (group.some((n) => all.has(n))) group.forEach((n) => all.add(n));
+  }
+  return [...all];
+}
+
 function searchTerms(query) {
-  const q = query.trim().toLowerCase();
-  return [q, ...(ALIASES[q] || [])];
+  return withAliases([query]);
 }
 
 /* ---------------- 查询 ---------------- */
@@ -281,7 +316,7 @@ async function searchVenues(query) {
   const conditions = terms
     .map((t) => `CONTAINS(LCASE(STR(?t)), ${literal(t)}) || CONTAINS(LCASE(STR(?stream)), ${literal('/' + t)})`)
     .join(' || ');
-  const rows = await api.query(`${PREFIXES}SELECT ?stream (SAMPLE(?pt) AS ?primary) (SAMPLE(?t) AS ?title)
+  const rows = await sparql(`${PREFIXES}SELECT ?stream (SAMPLE(?pt) AS ?primary) (SAMPLE(?t) AS ?title)
   (SAMPLE(?lb) AS ?label) (GROUP_CONCAT(DISTINCT STR(?type); SEPARATOR=" ") AS ?types)
 WHERE {
   ?stream dblp:streamTitle ?t .
@@ -347,7 +382,7 @@ const YEAR_PATTERNS = `?publ dblp:yearOfPublication ?yp .
     OPTIONAL { ?publ dblp:yearOfEvent ?ye }`;
 
 async function listYears(stream) {
-  const rows = await api.query(`${PREFIXES}SELECT ?year (COUNT(DISTINCT ?publ) AS ?count)
+  const rows = await sparql(`${PREFIXES}SELECT ?year (COUNT(DISTINCT ?publ) AS ?count)
 WHERE {
   ?publ dblp:publishedInStream ${streamIri(stream)} .
   ${YEAR_PATTERNS}
@@ -363,7 +398,7 @@ ORDER BY DESC(?year)`);
 }
 
 async function fetchPapers(venue, year) {
-  const rows = await api.query(`${PREFIXES}SELECT ?publ (SAMPLE(?t) AS ?title) (SAMPLE(?d) AS ?doi)
+  const rows = await sparql(`${PREFIXES}SELECT ?publ (SAMPLE(?t) AS ?title) (SAMPLE(?d) AS ?doi)
   (GROUP_CONCAT(DISTINCT STR(?type); SEPARATOR=" ") AS ?types)
   (GROUP_CONCAT(DISTINCT STR(?page); SEPARATOR=" ") AS ?pages)
   (GROUP_CONCAT(DISTINCT CONCAT(STR(?ord), "|", STR(?name)); SEPARATOR="||") AS ?authors)
@@ -422,6 +457,82 @@ GROUP BY ?publ`);
   return { papers: papers.sort(byTitle), proceedings: proceedings.sort(byTitle) };
 }
 
+/* ---------------- OpenReview（补充 dblp 尚未收录的年份） ---------------- */
+
+// OpenReview 上所有会场的 ID，例如 robot-learning.org/CoRL/2025/Conference
+async function openreviewVenueIds() {
+  const cached = store.get('openreview-venues');
+  if (cached) return cached;
+  const data = await openreview.get('/groups?id=venues');
+  const group = (data.groups || [])[0];
+  const ids = (group && Array.isArray(group.members) ? group.members : []).filter((id) => typeof id === 'string');
+  if (ids.length) store.set('openreview-venues', ids, DAY);
+  return ids;
+}
+
+// 找出和这个会议对应的 OpenReview 主会场（每年一个），返回 [{ year, venueid }]
+function matchOpenReviewVenues(venue, ids) {
+  const names = new Set(withAliases([venue.acronym || '', venue.stream.split('/').pop()]));
+  const byYear = new Map();
+  for (const id of ids) {
+    const parts = id.split('/');
+    if (parts[parts.length - 1] !== 'Conference') continue; // 只要主会，不要 workshop 等
+    const yi = parts.findIndex((part) => /^(19|20)\d\d$/.test(part));
+    if (yi < 1) continue;
+    const prefix = parts.slice(0, yi).map((part) => part.toLowerCase().replace(/\.cc$/, ''));
+    if (!prefix.some((part) => names.has(part))) continue;
+    const year = Number(parts[yi]);
+    const current = byYear.get(year);
+    if (!current || id.length < current.length) byYear.set(year, id);
+  }
+  return [...byYear].map(([year, venueid]) => ({ year, venueid }));
+}
+
+function openreviewPaper(note, venue, year) {
+  const content = note.content || {};
+  // API v2 的字段形如 { value: ... }，旧版直接是值
+  const field = (key) => {
+    const v = content[key];
+    return v && typeof v === 'object' && !Array.isArray(v) && 'value' in v ? v.value : v;
+  };
+  const id = encodeURIComponent(String(note.id || ''));
+  const forum = encodeURIComponent(String(note.forum || note.id || ''));
+  const links = [`https://openreview.net/forum?id=${forum}`];
+  if (field('pdf')) links.push(`https://openreview.net/pdf?id=${id}`);
+  return {
+    title: String(field('title') || '').trim().replace(/\s*\.$/, ''),
+    authors: (Array.isArray(field('authors')) ? field('authors') : []).map(String),
+    year: String(year),
+    venue: venueLabel(venue),
+    links,
+    dblp: '',
+  };
+}
+
+// 确认这一年在 OpenReview 上确实有已录用的论文（有的会议只用 OpenReview 审稿，论文不公开），顺便拿到篇数
+async function openreviewAcceptedCount(venueid) {
+  const params = new URLSearchParams({ 'content.venueid': venueid, limit: 1 });
+  const data = await openreview.get(`/notes?${params}`);
+  if (!(data.notes || []).length) return 0;
+  return Number.isInteger(data.count) ? data.count : -1; // -1：有论文，但不知道具体数量
+}
+
+async function fetchOpenReviewPapers(venue, entry) {
+  const pageSize = 1000;
+  const papers = [];
+  for (let offset = 0; offset < 50000; offset += pageSize) {
+    const params = new URLSearchParams({ 'content.venueid': entry.venueid, limit: pageSize, offset });
+    const data = await openreview.get(`/notes?${params}`);
+    const notes = data.notes || [];
+    for (const note of notes) {
+      const paper = openreviewPaper(note, venue, entry.year);
+      if (paper.title) papers.push(paper);
+    }
+    if (notes.length < pageSize) break;
+  }
+  return { papers: papers.sort((a, b) => a.title.localeCompare(b.title)), proceedings: [] };
+}
+
 /* ---------------- 界面 ---------------- */
 
 const state = {
@@ -456,14 +567,14 @@ function setStatus(message, kind = 'info') {
 function errorMessage(err) {
   if (err && err.network) {
     if (location.protocol === 'file:') {
-      return '当前是直接打开的 index.html 文件，浏览器会拦截对 dblp 的请求。'
+      return '当前是直接打开的 index.html 文件，浏览器会拦截对 dblp 等数据源的请求。'
         + '请在项目目录运行 python3 server.py，然后打开终端里显示的地址。';
     }
-    if (api.localProxyMissing() && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+    if (dblp.localProxyMissing() && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
       return `当前页面（${location.host}）不是由 server.py 提供的，可能是之前的 python3 -m http.server 还在运行。`
         + '请关掉它，重新运行 python3 server.py，然后打开终端里显示的地址（以 http://127.0.0.1 开头）。';
     }
-    return '浏览器无法直接访问 dblp 的查询服务（通常是跨域限制）。本地使用请在项目目录运行 python3 server.py，'
+    return `${err.message}（通常是浏览器的跨域限制）。本地使用请在项目目录运行 python3 server.py，`
       + '然后打开它显示的地址；在线部署请参考 README 配置代理。';
   }
   if (err && err.status === 429) return 'dblp 暂时限制了访问频率，请稍等一会儿再试。';
@@ -602,28 +713,52 @@ async function selectVenue(venue, restore = {}) {
       if (years.length) store.set(cacheKey, years, DAY);
     }
     if (!isCurrent()) return;
-
-    state.years = years;
+    state.years = years.map((y) => ({ ...y, source: 'dblp' }));
     renderYears();
-    if (!years.length) {
-      setStatus(`dblp 中没有找到 ${venueLabel(venue)} 的论文。`, 'error');
-      return;
-    }
-    const target = Number(restore.year) || null;
-    if (target) {
-      loadYear(target);
-    } else if (state.year === null) {
-      setStatus(`${venueLabel(venue)} 共有 ${years.length} 个年份，点击年份查看论文列表。`);
-    }
   } catch (err) {
     if (isCurrent()) setStatus(errorMessage(err), 'error');
+    return;
+  }
+
+  // dblp 通常要过几个月才收录新会议，用 OpenReview 补上缺的年份
+  if (state.year === null) setStatus(`正在检查 OpenReview 上有没有 dblp 尚未收录的年份…`, 'loading');
+  const extra = [];
+  try {
+    const known = new Set(state.years.map((y) => y.year));
+    const candidates = matchOpenReviewVenues(venue, await openreviewVenueIds()).filter((y) => !known.has(y.year));
+    for (const candidate of candidates) {
+      if (!isCurrent()) return;
+      const count = await openreviewAcceptedCount(candidate.venueid);
+      if (count) extra.push({ ...candidate, count: Math.max(count, 0), source: 'openreview' });
+    }
+  } catch (err) {
+    console.warn('OpenReview 暂时不可用：', err);
+  }
+  if (!isCurrent()) return;
+  if (extra.length) {
+    state.years = [...state.years, ...extra].sort((a, b) => b.year - a.year);
+    renderYears();
+  }
+
+  if (!state.years.length) {
+    setStatus(`dblp 中没有找到 ${venueLabel(venue)} 的论文。`, 'error');
+    return;
+  }
+  const target = Number(restore.year) || null;
+  if (target) {
+    loadYear(target);
+  } else if (state.year === null) {
+    const note = extra.length
+      ? `其中 ${extra.map((y) => y.year).join('、')} 年 dblp 尚未收录，论文来自 OpenReview。`
+      : '';
+    setStatus(`${venueLabel(venue)} 共有 ${state.years.length} 个年份，点击年份查看论文列表。${note}`);
   }
 }
 
 function renderYears() {
   const box = $('years');
   box.textContent = '';
-  for (const { year, count } of state.years) {
+  for (const { year, count, source } of state.years) {
     const btn = el('button', {
       type: 'button',
       class: 'year-btn',
@@ -632,6 +767,7 @@ function renderYears() {
     }, [
       el('span', { class: 'year-num', text: String(year) }),
       el('span', { class: 'year-count', text: count ? `${count} 篇` : '' }),
+      source === 'openreview' ? el('span', { class: 'year-source', text: '来自 OpenReview' }) : null,
     ]);
     btn.dataset.year = year;
     box.append(btn);
@@ -655,11 +791,15 @@ async function loadYear(year) {
   setStatus(`正在加载 ${venueLabel(venue)} ${year} 的论文…`, 'loading');
 
   try {
-    const result = await fetchPapers(venue, year);
+    const entry = state.years.find((y) => y.year === year);
+    const fromOpenReview = !!entry && entry.source === 'openreview';
+    const result = fromOpenReview ? await fetchOpenReviewPapers(venue, entry) : await fetchPapers(venue, year);
     if (!isCurrent()) return;
     renderPapers(result, venue, year);
     if (!result.papers.length) {
-      setStatus(`dblp 中没有 ${venueLabel(venue)} ${year} 的论文。`, 'error');
+      setStatus(`${fromOpenReview ? 'OpenReview' : 'dblp'} 中没有 ${venueLabel(venue)} ${year} 的论文。`, 'error');
+    } else if (fromOpenReview) {
+      setStatus(`dblp 尚未收录 ${venueLabel(venue)} ${year}，以下是 OpenReview 上已录用的论文。`);
     } else {
       setStatus('');
     }

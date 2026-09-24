@@ -237,6 +237,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 .year-btn[aria-pressed="true"] .year-count { color: inherit; opacity: 0.85; }
 .year-num { font-weight: 600; font-size: 16px; }
 .year-count { font-size: 12px; color: var(--muted); }
+.year-source { font-size: 11px; color: var(--accent); }
+.year-btn[aria-pressed="true"] .year-source { color: inherit; opacity: 0.85; }
 
 .year-form {
   display: flex;
