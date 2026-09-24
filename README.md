@@ -2,7 +2,7 @@
 
 输入会议名称（如 `CVPR`、`NeurIPS`、`ACL`），按年份列出该会议每篇论文的链接。数据来自 [dblp](https://dblp.org)。
 
-网页本身是纯静态的（HTML + CSS + JavaScript）。本地使用时，自带的 `server.py` 负责提供网页并代为请求 dblp，只用到 Python 标准库，不需要安装任何依赖。
+网页本身是纯静态的（HTML + CSS + JavaScript）。本地使用时，自带的 `server.py` 负责提供网页并代为查询 dblp，只用到 Python 标准库，不需要安装任何依赖。
 
 ## 功能
 
@@ -19,9 +19,9 @@
 python3 server.py
 ```
 
-会自动打开浏览器，地址以终端里显示的为准（默认 <http://127.0.0.1:8000>，端口被占用时会自动换一个）。终端里还会显示 dblp 是否连接正常。按 `Ctrl + C` 停止。
+会自动打开浏览器，地址以终端里显示的为准（默认 <http://127.0.0.1:8000>，端口被占用时会自动换一个）。终端里还会显示 dblp 查询服务是否连接正常。按 `Ctrl + C` 停止。
 
-> 请不要用 `python3 -m http.server` 或直接双击 `index.html` 打开：浏览器通常会因为跨域限制拦截对 dblp 的请求，页面会提示“浏览器无法直接访问 dblp”。`server.py` 会在本机代为请求 dblp，从而绕过这个限制。
+> 请不要用 `python3 -m http.server` 或直接双击 `index.html` 打开：浏览器通常会因为跨域限制拦截对 dblp 的请求，`server.py` 会在本机代为请求 dblp，从而绕过这个限制。
 
 ## 部署到 GitHub Pages
 
@@ -30,44 +30,53 @@ python3 server.py
 3. 选择要发布的分支和 `/ (root)` 目录，保存
 4. 等一两分钟后，访问页面上显示的网址
 
-GitHub Pages 只能放静态文件，没法运行 `server.py`。如果在线访问时提示“浏览器无法直接访问 dblp”，需要按下文部署一个 Cloudflare Worker 做中转。
+GitHub Pages 只能放静态文件，没法运行 `server.py`。如果在线访问时提示“浏览器无法直接访问 dblp 的查询服务”，需要按下文部署一个 Cloudflare Worker 做中转。
 
 ## 工作原理
 
-网页调用 dblp 的公开 API（本地使用时经 `server.py` 转发）：
+数据来自 dblp 官方的 [SPARQL 查询服务](https://sparql.dblp.org/)（`https://sparql.dblp.org/sparql`），这是 dblp 专门提供给程序查询数据的接口。官方服务不可用时，改用弗莱堡大学 QLever 上的 dblp 数据（`https://qlever.cs.uni-freiburg.de/api/dblp`）。本地使用时，请求经 `server.py` 转发。
 
-| 步骤 | 请求 |
+> dblp 的搜索 API（`dblp.org/search/...`）已加上 Anubis 人机验证，程序请求只会拿到“Making sure you're not a bot!”验证页，所以这里不再使用它。
+
+一共三种查询：
+
+| 步骤 | 查询内容 |
 | --- | --- |
-| 搜索会议 | `https://dblp.org/search/venue/api?q=CVPR&format=json` |
-| 获取年份和每年论文数 | `https://dblp.org/search/publ/api?q=streamid:conf/cvpr: year:&c=1000&format=json`（利用搜索补全；如果拿不到，就逐年查询） |
-| 获取某一年的论文 | `https://dblp.org/search/publ/api?q=streamid:conf/cvpr: year:2024&h=1000&f=0&format=json`（每次最多 1000 条，自动翻页） |
+| 搜索会议 | 标题或 dblp 标识（如 `conf/cvpr`）包含关键词的会议、期刊 |
+| 获取年份和每年论文数 | 按年份统计该会议的论文数（不含论文集本身） |
+| 获取某一年的论文 | 标题、作者（按署名顺序）、DOI 和全部论文链接 |
 
-请求会自动排队，两次请求至少间隔 0.4 秒，避免给 dblp 造成压力。遇到限流（HTTP 429）会等待后重试。
+论文所属年份优先按会议举办年份计算（例如 ECCV 2024 的论文集 2025 年才出版，仍算在 2024 年），没有举办年份时用出版年份。请求会自动排队，两次请求至少间隔 0.3 秒；遇到限流（HTTP 429）会等待后重试。
 
 ## 连接 dblp 失败时
 
 网页会依次尝试：
 
-1. `server.py` 提供的本地中转（`/dblp-proxy/`，只在用 `server.py` 启动时存在）
-2. 浏览器直接请求 `dblp.org`，再试官方镜像 `dblp.uni-trier.de`
-3. 改用 JSONP 方式请求
+1. `server.py` 提供的本地中转（`/dblp-proxy/sparql`，只在用 `server.py` 启动时存在）
+2. 浏览器直接请求 dblp 的 SPARQL 服务，再试 QLever 上的备用数据
 
-常见提示：
+`server.py` 启动时会先查询一次，终端里显示“✓ dblp 查询服务连接正常”或具体原因。常见提示：
 
-- **“浏览器无法直接访问 dblp”**：没有用 `server.py` 启动，浏览器又拦截了跨域请求。本地请改用 `python3 server.py`；在线部署请配置下面的 Cloudflare Worker。
-- **“本地服务器也无法连接 dblp”**：本机网络访问不了 dblp。先确认浏览器能打开 <https://dblp.org>；如果需要代理才能访问，`server.py` 会使用系统代理设置，也可以在启动前设置 `HTTPS_PROXY` 环境变量。
+- **“当前页面不是由 server.py 提供的”**：打开的页面来自别的服务（例如之前的 `python3 -m http.server`）。关掉它，重新运行 `python3 server.py`，打开终端里显示的地址。
+- **“本地服务器也无法连接 dblp 查询服务”**：本机网络访问不了 dblp。如果需要代理才能访问，`server.py` 会使用系统代理设置，也可以在启动前设置 `HTTPS_PROXY` 环境变量。
+- **“返回的不是查询结果……开头内容：……”**：服务返回了网页（比如人机验证页）而不是数据，开头内容能看出具体原因。
 
 在线部署时的中转：部署 [`proxy/cloudflare-worker.js`](proxy/cloudflare-worker.js)。
 
 1. 在 Cloudflare 控制台新建一个 Worker，把该文件内容粘贴进去并部署
-2. 把 Worker 地址加到 `app.js` 里 `CONFIG.apiBases` 的最前面：
+2. 把 Worker 地址（以 `/sparql` 结尾）加到 `app.js` 里 `CONFIG.endpoints` 的最前面：
 
    ```js
-   apiBases: ['https://你的-worker.workers.dev', 'dblp-proxy', 'https://dblp.org', 'https://dblp.uni-trier.de'],
+   endpoints: [
+     'https://你的-worker.workers.dev/sparql',
+     'dblp-proxy/sparql',
+     'https://sparql.dblp.org/sparql',
+     'https://qlever.cs.uni-freiburg.de/api/dblp',
+   ],
    ```
 
 ## 已知限制
 
 - 论文链接大多指向出版方或 DOI 页面，不一定能免费下载 PDF。
-- dblp 单个查询最多返回 10000 条结果，一年论文超过这个数时只能显示一部分（目前没有会议到这个规模）。
 - 论文数据以 dblp 收录为准：刚开完的会议可能还没被收录。
+- 论文按标题排序，不是论文集里的目录顺序。
