@@ -8,9 +8,11 @@
 只用到 Python 标准库，不需要安装任何依赖。
 """
 
+import gzip
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -30,7 +32,9 @@ USER_AGENT = 'conference-paper-finder (local)'
 
 
 class UpstreamError(Exception):
-    pass
+    def __init__(self, message, network_only=True):
+        super().__init__(message)
+        self.network_only = network_only
 
 
 def fetch_with_curl(url):
@@ -44,27 +48,73 @@ def fetch_with_curl(url):
     return result.stdout if result.returncode == 0 else None
 
 
+def http_get(url):
+    """返回 (状态码, 内容, Content-Type)；连不上时抛出 UpstreamError。"""
+    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            body = response.read()
+            if response.headers.get('Content-Encoding', '').lower() == 'gzip':
+                body = gzip.decompress(body)
+            return response.status, body, response.headers.get('Content-Type', '')
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), e.headers.get('Content-Type', '')
+    except Exception as e:  # 网络错误、超时、证书问题等
+        reason = getattr(e, 'reason', e)
+        if isinstance(reason, ssl.SSLError):
+            body = fetch_with_curl(url)
+            if body is not None:
+                return 200, body, ''
+        raise UpstreamError(str(reason))
+
+
+def parse_json(body):
+    """宽松地解析 JSON：允许字符串里有控制字符，并修复无效的反斜杠转义。"""
+    text = body.decode('utf-8-sig', errors='replace')
+    try:
+        return json.loads(text, strict=False)
+    except ValueError:
+        pass
+    repaired = re.sub(r'\\(.)', lambda m: m.group(0) if m.group(1) in '"\\/bfnrtu' else '\\\\' + m.group(1),
+                      text, flags=re.S)
+    return json.loads(repaired, strict=False)
+
+
+def preview(body, limit=200):
+    text = ' '.join(body[:limit * 2].decode('utf-8', errors='replace').split())
+    return text[:limit] or '（空）'
+
+
 def fetch_upstream(path_and_query):
+    """请求 dblp，返回 (状态码, 发给浏览器的 JSON 内容)。"""
     errors = []
+    network_only = True
     for base in UPSTREAMS:
-        url = f'{base}/{path_and_query}'
-        request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as e:
-            if e.code >= 500 and base != UPSTREAMS[-1]:
-                errors.append(f'{base}: HTTP {e.code}')
-                continue  # 服务器出错时换镜像试试
-            return e.code, e.read()
-        except Exception as e:  # 网络错误、超时、证书问题等
-            reason = getattr(e, 'reason', e)
-            if isinstance(reason, ssl.SSLError):
-                body = fetch_with_curl(url)
-                if body is not None:
-                    return 200, body
-            errors.append(f'{base}: {reason}')
-    raise UpstreamError('；'.join(errors))
+            status, body, content_type = http_get(f'{base}/{path_and_query}')
+        except UpstreamError as e:
+            errors.append(f'{base}: {e}')
+            continue
+        if status >= 500 and base != UPSTREAMS[-1]:
+            errors.append(f'{base}: HTTP {status}')
+            continue  # 服务器出错时换镜像试试
+        if status != 200:
+            return status, body
+        try:
+            data = parse_json(body)
+        except ValueError:
+            network_only = False
+            errors.append(f'{base}: 返回的不是有效的 JSON（Content-Type: {content_type or "未知"}，开头内容：{preview(body)}）')
+            continue
+        # 重新序列化，保证浏览器一定能解析
+        return 200, json.dumps(data, ensure_ascii=False).encode('utf-8')
+    raise UpstreamError('；'.join(errors), network_only)
+
+
+def upstream_error_message(e):
+    if e.network_only:
+        return f'本地服务器也无法连接 dblp，请检查网络（例如是否需要开代理）。详情：{e}'
+    return f'dblp 返回的数据无法使用。详情：{e}'
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -85,7 +135,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             status, body = fetch_upstream(path_and_query)
         except UpstreamError as e:
-            message = f'本地服务器也无法连接 dblp，请检查网络（例如是否需要开代理）。详情：{e}'
+            message = upstream_error_message(e)
             self.log_message('%s', message)
             self.send_json(502, {'error': message})
             return
@@ -137,15 +187,14 @@ def start_server(preferred_port):
 def check_dblp():
     """启动时试着连一次 dblp，把结果打印出来，方便排查网络问题。"""
     try:
-        status, _ = fetch_upstream('search/venue/api?q=CVPR&format=json&h=1')
+        status, body = fetch_upstream('search/venue/api?q=CVPR&format=json&h=5')
     except UpstreamError as e:
-        print(f'✗ 无法连接 dblp：{e}')
-        print('  请检查网络；如果需要代理才能访问 dblp，请先设置 HTTPS_PROXY 再启动。')
+        print(f'✗ {upstream_error_message(e)}')
         return
     if status == 200:
         print('✓ dblp 连接正常')
     else:
-        print(f'✗ dblp 返回 HTTP {status}')
+        print(f'✗ dblp 返回 HTTP {status}：{preview(body)}')
 
 
 def main():

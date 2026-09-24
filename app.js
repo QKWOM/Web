@@ -111,10 +111,30 @@ const api = (() => {
       }
       throw new ApiError(detail || `dblp 返回错误（HTTP ${res.status}）`, { status: res.status });
     }
+    let body;
     try {
-      return await res.json();
+      body = await res.text();
     } catch (e) {
-      throw new ApiError('dblp 返回的数据无法解析', { status: res.status });
+      throw new ApiError('读取 dblp 数据时连接中断', { network: true });
+    }
+    try {
+      return parseJson(body);
+    } catch (e) {
+      console.error('dblp 返回的内容无法解析：', body.slice(0, 2000));
+      const head = body.replace(/\s+/g, ' ').trim().slice(0, 150) || '（空）';
+      throw new ApiError(`dblp 返回的数据无法解析（开头内容：${head}）`, { status: res.status });
+    }
+  }
+
+  // 宽松解析：dblp 数据里偶尔有未转义的控制字符或无效的反斜杠转义
+  function parseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      const repaired = text
+        .replace(/[\u0000-\u001f]+/g, ' ')
+        .replace(/\\(.)/g, (m, c) => ('"\\/bfnrtu'.includes(c) ? m : '\\\\' + c));
+      return JSON.parse(repaired);
     }
   }
 
