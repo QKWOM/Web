@@ -1,14 +1,14 @@
-# 会议论文速查
+# 会议期刊论文速查
 
-输入会议名称（如 `CVPR`、`NeurIPS`、`ACL`），按年份列出该会议每篇论文的链接。数据来自 [dblp](https://dblp.org)；dblp 尚未收录的年份（通常是最近一两年），会自动从 [OpenReview](https://openreview.net) 补充。
+输入会议或期刊名称（如 `CVPR`、`NeurIPS`、`TPAMI`），按年份列出每篇论文的链接。数据来自 [dblp](https://dblp.org)；dblp 尚未收录的年份（通常是最近一两年），会自动从 [OpenReview](https://openreview.net) 补充。
 
 网页本身是纯静态的（HTML + CSS + JavaScript）。本地使用时，自带的 `server.py` 负责提供网页并代为查询 dblp 和 OpenReview，只用到 Python 标准库，不需要安装任何依赖。
 
 ## 功能
 
-- 按会议名称或缩写搜索，同名的会议和 workshop 会列出来供选择
-- 列出该会议所有年份及每年的论文数量，点击年份加载论文
-- dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
+- 按会议或期刊的名称、缩写搜索，同名的会议、workshop 和期刊会列出来供选择；TPAMI、TNNLS 这类和 dblp 标识不一致的常用缩写也能直接搜
+- 列出所有年份及每年的论文数量，点击年份加载论文；每次加载 1000 篇，更多的点“加载更多”
+- 会议中 dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
 - 每篇论文显示标题、作者和链接：开放获取页面（CVF、OpenReview、ACL Anthology、PMLR 等）优先，另附 DOI 和 dblp 链接
 - 按标题或作者筛选
 - 导出 CSV（Excel 可直接打开），或一键复制所有论文链接
@@ -43,13 +43,13 @@ GitHub Pages 只能放静态文件，没法运行 `server.py`。如果在线访�
 
 | 步骤 | 查询内容 |
 | --- | --- |
-| 搜索会议 | 标题或 dblp 标识（如 `conf/cvpr`）包含关键词的会议、期刊 |
+| 搜索会议和期刊 | 按 dblp 标识精确查找（如 `conf/cvpr`、`journals/pami`，含常用缩写的别名），再按名称模糊查找；三个字母以内的缩写只匹配名称括号里的缩写，避免 AI、TC 这类缩写匹配到几乎所有名称 |
 | 获取年份和每年论文数 | 按年份统计该会议的论文数（不含论文集本身） |
-| 获取某一年的论文 | 标题、作者（按署名顺序）、DOI 和全部论文链接 |
+| 获取某一年的论文 | 按标题排序，每次 1000 篇：标题、作者（按署名顺序）、DOI 和全部论文链接 |
 
 ### OpenReview 补充
 
-dblp 通常要在会议结束几个月后才收录论文集。选中一个会议后，网页会在 OpenReview 的会场列表（`https://api2.openreview.net/groups?id=venues`）里找同名会议的主会场，例如 `robot-learning.org/CoRL/2025/Conference`、`ICLR.cc/2025/Conference`，把 dblp 缺少的年份补上。点这些年份时，列出 OpenReview 上该会场已录用的论文（`/notes?content.venueid=…`），每篇附论文页和 PDF 链接。
+dblp 通常要在会议结束几个月后才收录论文集。选中一个会议（期刊不需要）后，网页会在 OpenReview 的会场列表（`https://api2.openreview.net/groups?id=venues`）里找同名会议的主会场，例如 `robot-learning.org/CoRL/2025/Conference`、`ICLR.cc/2025/Conference`，把 dblp 缺少的年份补上。点这些年份时，列出 OpenReview 上该会场已录用的论文（`/notes?content.venueid=…`），每篇附论文页和 PDF 链接。
 
 - 只使用主会场，不包括 workshop、Datasets and Benchmarks 等分会场。
 - 有的会议只用 OpenReview 审稿，不公开论文（例如 CVPR）。这类会场查不到已录用的论文，不会显示。

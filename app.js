@@ -18,14 +18,27 @@ const CONFIG = {
   minGapMs: 300, // 两次请求之间的最小间隔，避免给服务器造成压力
 };
 
-const POPULAR = [
-  'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'ACL',
-  'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
-];
+const POPULAR = {
+  会议: [
+    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'ACL',
+    'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
+  ],
+  期刊: ['TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL'],
+};
+
+// 每次加载的论文数，更多的点“加载更多”
+const PAGE_SIZE = 1000;
 
 // 常用名称和 dblp 内部标识不一致的会议（同一组里的名称视为同一个会议）
 const ALIAS_GROUPS = [
   ['neurips', 'nips'],
+  ['tpami', 'pami'],
+  ['tnnls', 'tnn'],
+  ['tcsvt', 'tcsv'],
+  ['tro', 't-ro', 'trob'],
+  ['ra-l', 'ral'],
+  ['vldb', 'pvldb'],
+  ['aij', 'ai'],
 ];
 
 // 优先作为论文主链接的站点（通常可以直接看到 PDF）
@@ -307,32 +320,52 @@ function searchTerms(query) {
 
 /* ---------------- 查询 ---------------- */
 
+const VENUE_SELECT = `SELECT ?stream (SAMPLE(?pt) AS ?primary) (SAMPLE(?t) AS ?title)
+  (SAMPLE(?lb) AS ?label) (GROUP_CONCAT(DISTINCT STR(?type); SEPARATOR=" ") AS ?types)`;
+const VENUE_PATTERNS = `?stream dblp:streamTitle ?t .
+  ?stream rdf:type ?type .
+  OPTIONAL { ?stream dblp:primaryStreamTitle ?pt }
+  OPTIONAL { ?stream rdfs:label ?lb }`;
+
 async function searchVenues(query) {
-  const cacheKey = 'venue:' + query.trim().toLowerCase();
+  const cacheKey = 'venue2:' + query.trim().toLowerCase();
   const cached = store.get(cacheKey);
   if (cached) return cached;
 
   const terms = searchTerms(query);
-  const conditions = terms
-    .map((t) => `CONTAINS(LCASE(STR(?t)), ${literal(t)}) || CONTAINS(LCASE(STR(?stream)), ${literal('/' + t)})`)
-    .join(' || ');
-  const rows = await sparql(`${PREFIXES}SELECT ?stream (SAMPLE(?pt) AS ?primary) (SAMPLE(?t) AS ?title)
-  (SAMPLE(?lb) AS ?label) (GROUP_CONCAT(DISTINCT STR(?type); SEPARATOR=" ") AS ?types)
+  const q = terms[0];
+
+  // 1. 按 dblp 标识精确查找（例如 conf/cvpr、journals/pami），保证缩写一定能找到
+  const keys = terms.filter((t) => /^[a-z0-9][\w.-]*$/.test(t));
+  const iris = keys.flatMap((k) => ['conf', 'journals', 'series'].map((kind) => `<${STREAM_BASE}${kind}/${k}>`));
+  const exactRows = iris.length
+    ? await sparql(`${PREFIXES}${VENUE_SELECT}
 WHERE {
-  ?stream dblp:streamTitle ?t .
-  ?stream rdf:type ?type .
-  OPTIONAL { ?stream dblp:primaryStreamTitle ?pt }
-  OPTIONAL { ?stream rdfs:label ?lb }
-  FILTER(${conditions})
+  VALUES ?stream { ${iris.join(' ')} }
+  ${VENUE_PATTERNS}
+}
+GROUP BY ?stream`)
+    : [];
+
+  // 2. 按名称模糊查找；很短的缩写（如 AI、TC）只匹配括号里的缩写，否则几乎所有标题都会匹配
+  const titleCondition = q.length <= 3
+    ? `CONTAINS(LCASE(STR(?t)), ${literal(`(${q})`)})`
+    : `CONTAINS(LCASE(STR(?t)), ${literal(q)})`;
+  const fuzzyRows = await sparql(`${PREFIXES}${VENUE_SELECT}
+WHERE {
+  ${VENUE_PATTERNS}
+  FILTER(${titleCondition} || CONTAINS(LCASE(STR(?stream)), ${literal('/' + q)}))
 }
 GROUP BY ?stream
 LIMIT 1000`);
 
   const venues = [];
-  for (const row of rows) {
+  const seen = new Set();
+  for (const row of [...exactRows, ...fuzzyRows]) {
     const iri = val(row, 'stream');
     const stream = iri.startsWith(STREAM_BASE) ? iri.slice(STREAM_BASE.length) : '';
-    if (!STREAM_KEY.test(stream)) continue;
+    if (!STREAM_KEY.test(stream) || seen.has(stream)) continue;
+    seen.add(stream);
     const key = stream.split('/').pop();
     const name = val(row, 'primary') || val(row, 'title') || stream;
     const label = val(row, 'label');
@@ -397,26 +430,31 @@ ORDER BY DESC(?year)`);
     .sort((a, b) => b.year - a.year);
 }
 
-async function fetchPapers(venue, year) {
+// 加载某一年的一页论文（按标题排序），返回 { papers, proceedings, hasMore }
+async function fetchPapers(venue, year, offset = 0) {
   const rows = await sparql(`${PREFIXES}SELECT ?publ (SAMPLE(?t) AS ?title) (SAMPLE(?d) AS ?doi)
   (GROUP_CONCAT(DISTINCT STR(?type); SEPARATOR=" ") AS ?types)
   (GROUP_CONCAT(DISTINCT STR(?page); SEPARATOR=" ") AS ?pages)
   (GROUP_CONCAT(DISTINCT CONCAT(STR(?ord), "|", STR(?name)); SEPARATOR="||") AS ?authors)
 WHERE {
   {
-    SELECT DISTINCT ?publ WHERE {
+    SELECT ?publ ?t WHERE {
       ?publ dblp:publishedInStream ${streamIri(venue.stream)} .
       ${YEAR_PATTERNS}
       FILTER(STR(COALESCE(?ye, ?yp)) = ${literal(String(year))})
+      ?publ dblp:title ?t .
     }
+    ORDER BY ?t ?publ
+    LIMIT ${PAGE_SIZE}
+    OFFSET ${offset}
   }
-  ?publ dblp:title ?t .
   ?publ rdf:type ?type .
   OPTIONAL { ?publ dblp:doi ?d }
   OPTIONAL { ?publ dblp:documentPage ?page }
   OPTIONAL { ?publ dblp:hasSignature ?sig . ?sig dblp:signatureOrdinal ?ord . ?sig dblp:signatureDblpName ?name }
 }
-GROUP BY ?publ`);
+GROUP BY ?publ
+ORDER BY ?title`);
 
   const papers = [];
   const proceedings = [];
@@ -444,6 +482,7 @@ GROUP BY ?publ`);
       .map((a) => a.name);
 
     const paper = {
+      id: val(row, 'publ'),
       title: val(row, 'title').replace(/\s*\.$/, ''),
       authors,
       year: String(year),
@@ -453,8 +492,7 @@ GROUP BY ?publ`);
     };
     (/#Editorship\b/.test(val(row, 'types')) ? proceedings : papers).push(paper);
   }
-  const byTitle = (a, b) => a.title.localeCompare(b.title);
-  return { papers: papers.sort(byTitle), proceedings: proceedings.sort(byTitle) };
+  return { papers, proceedings, hasMore: rows.length >= PAGE_SIZE };
 }
 
 /* ---------------- OpenReview（补充 dblp 尚未收录的年份） ---------------- */
@@ -500,6 +538,7 @@ function openreviewPaper(note, venue, year) {
   const links = [`https://openreview.net/forum?id=${forum}`];
   if (field('pdf')) links.push(`https://openreview.net/pdf?id=${id}`);
   return {
+    id: String(note.id || ''),
     title: String(field('title') || '').trim().replace(/\s*\.$/, ''),
     authors: (Array.isArray(field('authors')) ? field('authors') : []).map(String),
     year: String(year),
@@ -517,20 +556,13 @@ async function openreviewAcceptedCount(venueid) {
   return Number.isInteger(data.count) ? data.count : -1; // -1：有论文，但不知道具体数量
 }
 
-async function fetchOpenReviewPapers(venue, entry) {
-  const pageSize = 1000;
-  const papers = [];
-  for (let offset = 0; offset < 50000; offset += pageSize) {
-    const params = new URLSearchParams({ 'content.venueid': entry.venueid, limit: pageSize, offset });
-    const data = await openreview.get(`/notes?${params}`);
-    const notes = data.notes || [];
-    for (const note of notes) {
-      const paper = openreviewPaper(note, venue, entry.year);
-      if (paper.title) papers.push(paper);
-    }
-    if (notes.length < pageSize) break;
-  }
-  return { papers: papers.sort((a, b) => a.title.localeCompare(b.title)), proceedings: [] };
+// 加载 OpenReview 上某一年的一页已录用论文，返回 { papers, proceedings, hasMore }
+async function fetchOpenReviewPapers(venue, entry, offset = 0) {
+  const params = new URLSearchParams({ 'content.venueid': entry.venueid, limit: PAGE_SIZE, offset });
+  const data = await openreview.get(`/notes?${params}`);
+  const notes = data.notes || [];
+  const papers = notes.map((note) => openreviewPaper(note, venue, entry.year)).filter((p) => p.title);
+  return { papers, proceedings: [], hasMore: notes.length >= PAGE_SIZE };
 }
 
 /* ---------------- 界面 ---------------- */
@@ -542,6 +574,7 @@ const state = {
   years: [],
   year: null,
   rows: [],
+  paging: null, // { load(offset), offset, total, hasMore, seen }
   tokens: { search: 0, venue: 0, year: 0 },
 };
 
@@ -608,8 +641,12 @@ function el(tag, props = {}, children = []) {
 
 function renderPopular() {
   const box = $('popular');
-  for (const name of POPULAR) {
-    box.append(el('button', { type: 'button', class: 'chip', text: name, onclick: () => runSearch(name) }));
+  for (const [group, names] of Object.entries(POPULAR)) {
+    const row = el('div', { class: 'chip-row' }, [el('span', { class: 'chip-label', text: group })]);
+    for (const name of names) {
+      row.append(el('button', { type: 'button', class: 'chip', text: name, onclick: () => runSearch(name) }));
+    }
+    box.append(row);
   }
 }
 
@@ -641,7 +678,7 @@ async function runSearch(query, restore = {}) {
 
   state.venues = venues;
   if (!venues.length) {
-    setStatus(`没有找到名称包含“${query}”的会议，换个写法试试（例如用缩写 CVPR，或英文全称）。`, 'error');
+    setStatus(`没有找到名称包含“${query}”的会议或期刊，换个写法试试（例如用缩写 CVPR、TPAMI，或英文全称）。`, 'error');
     return;
   }
   renderVenues();
@@ -720,10 +757,13 @@ async function selectVenue(venue, restore = {}) {
     return;
   }
 
-  // dblp 通常要过几个月才收录新会议，用 OpenReview 补上缺的年份
-  if (state.year === null) setStatus(`正在检查 OpenReview 上有没有 dblp 尚未收录的年份…`, 'loading');
+  // dblp 通常要过几个月才收录新会议，用 OpenReview 补上缺的年份（只针对会议）
+  const isConference = !venue.type || venue.type === 'Conference or Workshop';
+  if (isConference && state.year === null) {
+    setStatus(`正在检查 OpenReview 上有没有 dblp 尚未收录的年份…`, 'loading');
+  }
   const extra = [];
-  try {
+  if (isConference) try {
     const known = new Set(state.years.map((y) => y.year));
     const candidates = matchOpenReviewVenues(venue, await openreviewVenueIds()).filter((y) => !known.has(y.year));
     for (const candidate of candidates) {
@@ -790,13 +830,21 @@ async function loadYear(year) {
   $('papers-section').hidden = true;
   setStatus(`正在加载 ${venueLabel(venue)} ${year} 的论文…`, 'loading');
 
+  const entry = state.years.find((y) => y.year === year);
+  const fromOpenReview = !!entry && entry.source === 'openreview';
+  state.paging = {
+    load: (offset) => (fromOpenReview ? fetchOpenReviewPapers(venue, entry, offset) : fetchPapers(venue, year, offset)),
+    offset: 0,
+    total: entry && entry.count > 0 ? entry.count : null,
+    hasMore: false,
+    seen: new Set(),
+  };
   try {
-    const entry = state.years.find((y) => y.year === year);
-    const fromOpenReview = !!entry && entry.source === 'openreview';
-    const result = fromOpenReview ? await fetchOpenReviewPapers(venue, entry) : await fetchPapers(venue, year);
+    const result = await state.paging.load(0);
     if (!isCurrent()) return;
-    renderPapers(result, venue, year);
-    if (!result.papers.length) {
+    resetPapers(venue, year);
+    addPapers(result);
+    if (!state.rows.length) {
       setStatus(`${fromOpenReview ? 'OpenReview' : 'dblp'} 中没有 ${venueLabel(venue)} ${year} 的论文。`, 'error');
     } else if (fromOpenReview) {
       setStatus(`dblp 尚未收录 ${venueLabel(venue)} ${year}，以下是 OpenReview 上已录用的论文。`);
@@ -808,27 +856,62 @@ async function loadYear(year) {
   }
 }
 
-function renderPapers({ papers, proceedings }, venue, year) {
+async function loadMore() {
+  const paging = state.paging;
+  if (!paging || !paging.hasMore) return;
+  const token = state.tokens.year;
+  const button = $('load-more');
+  button.disabled = true;
+  button.textContent = '正在加载…';
+  try {
+    const result = await paging.load(paging.offset);
+    if (state.tokens.year !== token) return;
+    addPapers(result);
+  } catch (err) {
+    if (state.tokens.year === token) setStatus(errorMessage(err), 'error');
+  } finally {
+    button.disabled = false;
+    updateCount();
+  }
+}
+
+function resetPapers(venue, year) {
   $('papers-title').textContent = `${venueLabel(venue)} ${year}`;
   $('filter').value = '';
+  const proc = $('proceedings');
+  proc.hidden = true;
+  proc.open = false;
+  proc.querySelector('ul').textContent = '';
+  $('papers').textContent = '';
+  state.rows = [];
+  $('papers-section').hidden = false;
+}
+
+// 把一页论文追加到列表
+function addPapers({ papers, proceedings, hasMore }) {
+  const paging = state.paging;
+  paging.offset += PAGE_SIZE;
+  const fresh = (p) => {
+    if (p.id && paging.seen.has(p.id)) return false; // 翻页边界上可能重复
+    paging.seen.add(p.id);
+    return true;
+  };
 
   const proc = $('proceedings');
-  proc.hidden = !proceedings.length;
-  proc.open = false;
-  proc.querySelector('summary').textContent = `论文集（${proceedings.length} 卷）`;
   const procList = proc.querySelector('ul');
-  procList.textContent = '';
-  for (const p of proceedings) {
+  for (const p of proceedings.filter(fresh)) {
     const href = mainLink(p);
     procList.append(el('li', {}, [href
       ? el('a', { href, target: '_blank', rel: 'noopener', text: p.title })
       : document.createTextNode(p.title)]));
   }
+  const volumes = procList.children.length;
+  proc.hidden = !volumes;
+  proc.querySelector('summary').textContent = `论文集（${volumes} 卷）`;
 
-  const list = $('papers');
-  list.textContent = '';
+  const terms = filterTerms();
   const frag = document.createDocumentFragment();
-  state.rows = papers.map((p) => {
+  for (const p of papers.filter(fresh)) {
     const href = mainLink(p);
     const links = p.links.map((u) => el('a', { href: u, target: '_blank', rel: 'noopener', text: linkLabel(u) }));
     if (p.dblp) links.push(el('a', { href: p.dblp, target: '_blank', rel: 'noopener', text: 'dblp' }));
@@ -839,12 +922,16 @@ function renderPapers({ papers, proceedings }, venue, year) {
       p.authors.length ? el('div', { class: 'paper-authors', text: p.authors.join(', ') }) : null,
       links.length ? el('div', { class: 'paper-links' }, links) : null,
     ]);
+    const row = { li, paper: p, haystack: `${p.title} ${p.authors.join(' ')}`.toLowerCase() };
+    li.hidden = !matches(row, terms);
+    state.rows.push(row);
     frag.append(li);
-    return { li, paper: p, haystack: `${p.title} ${p.authors.join(' ')}`.toLowerCase() };
-  });
-  list.append(frag);
+  }
+  $('papers').append(frag);
+  // 知道总数时按已加载数判断；一页是空的说明已经到底
+  const pageEmpty = !papers.length && !proceedings.length;
+  paging.hasMore = !pageEmpty && (paging.total ? state.rows.length < paging.total : hasMore);
   updateCount();
-  $('papers-section').hidden = false;
 }
 
 function visibleRows() {
@@ -853,15 +940,33 @@ function visibleRows() {
 
 function updateCount() {
   const shown = visibleRows().length;
-  const total = state.rows.length;
-  $('papers-count').textContent = shown === total ? `共 ${total} 篇` : `显示 ${shown} / ${total} 篇`;
+  const loaded = state.rows.length;
+  const paging = state.paging || {};
+  const total = paging.total && paging.total > loaded ? paging.total : null;
+  let text;
+  if (shown !== loaded) text = `显示 ${shown} / 已加载 ${loaded} 篇`;
+  else if (paging.hasMore) text = total ? `已加载 ${loaded} / ${total} 篇` : `已加载 ${loaded} 篇`;
+  else text = `共 ${loaded} 篇`;
+  $('papers-count').textContent = text;
+
+  const button = $('load-more');
+  button.hidden = !paging.hasMore;
+  if (!button.disabled) {
+    button.textContent = total ? `加载更多（还有 ${total - loaded} 篇）` : '加载更多';
+  }
+}
+
+function filterTerms() {
+  return $('filter').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function matches(row, terms) {
+  return terms.every((t) => row.haystack.includes(t));
 }
 
 function applyFilter() {
-  const terms = $('filter').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  for (const row of state.rows) {
-    row.li.hidden = !terms.every((t) => row.haystack.includes(t));
-  }
+  const terms = filterTerms();
+  for (const row of state.rows) row.li.hidden = !matches(row, terms);
   updateCount();
 }
 
@@ -929,6 +1034,7 @@ function init() {
   });
   $('export-csv').addEventListener('click', exportCsv);
   $('copy-links').addEventListener('click', copyLinks);
+  $('load-more').addEventListener('click', loadMore);
 
   // 支持分享链接：?q=CVPR&venue=conf/cvpr&year=2024
   const params = new URLSearchParams(location.search);

@@ -125,10 +125,20 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 .search button { padding: 12px 22px; font-size: 16px; }
 
 .chips {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.chip-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-top: 14px;
+}
+.chip-label {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 13px;
 }
 .chip {
   padding: 4px 12px;
@@ -303,6 +313,13 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   font-size: 12px;
 }
 .paper-links a:hover { border-color: var(--accent); text-decoration: none; }
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.load-more button:disabled { opacity: 0.6; cursor: default; }
 
 .empty {
   padding: 16px 0;
