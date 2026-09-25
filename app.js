@@ -18,28 +18,35 @@ const CONFIG = {
   minGapMs: 300, // 两次请求之间的最小间隔，避免给服务器造成压力
 };
 
-// 常用按钮；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
-const POPULAR = {
-  会议: [
-    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI',
-    { label: 'CoRL', venue: 'conf/corl' },
-    { label: 'ICRA', venue: 'conf/icra' },
-    { label: 'IROS', venue: 'conf/iros' },
-    { label: 'RSS', venue: 'conf/rss' },
-    'ACL', 'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
-  ],
-  期刊: [
-    'TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL',
-    { label: 'T-RO', venue: 'journals/trob' },
-    { label: 'IJRR', venue: 'journals/ijrr' },
-    { label: 'RA-L', venue: 'journals/ral' },
-    { label: 'Science Robotics', venue: 'journals/scirobotics' },
-    { label: 'RAM', venue: 'journals/ram' },
-    { label: 'AURO', venue: 'journals/arobots' },
-    { label: 'JFR', venue: 'journals/jfr' },
-    { label: 'RAS', venue: 'journals/ras' },
-  ],
-};
+// 常用按钮，按研究方向分组；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
+const POPULAR = [
+  {
+    area: '机器人',
+    conferences: [
+      { label: 'CoRL', venue: 'conf/corl' },
+      { label: 'ICRA', venue: 'conf/icra' },
+      { label: 'IROS', venue: 'conf/iros' },
+      { label: 'RSS', venue: 'conf/rss' },
+    ],
+    journals: [
+      { label: 'T-RO', venue: 'journals/trob' },
+      { label: 'IJRR', venue: 'journals/ijrr' },
+      { label: 'RA-L', venue: 'journals/ral' },
+      { label: 'Science Robotics', venue: 'journals/scirobotics' },
+      { label: 'RAM', venue: 'journals/ram' },
+      { label: 'AURO', venue: 'journals/arobots' },
+      { label: 'JFR', venue: 'journals/jfr' },
+      { label: 'RAS', venue: 'journals/ras' },
+    ],
+  },
+  { area: '机器学习', conferences: ['NeurIPS', 'ICML', 'ICLR'], journals: ['JMLR', 'TMLR', 'TNNLS'] },
+  { area: '计算机视觉', conferences: ['CVPR', 'ICCV', 'ECCV'], journals: ['TPAMI', 'IJCV', 'TIP'] },
+  { area: '自然语言处理', conferences: ['ACL', 'EMNLP', 'NAACL'], journals: ['TACL'] },
+  { area: '人工智能', conferences: ['AAAI', 'IJCAI'], journals: [] },
+  { area: '数据挖掘与数据库', conferences: ['KDD', 'WWW', 'SIGIR', 'SIGMOD'], journals: ['TKDE', 'PVLDB'] },
+  { area: '图形学与人机交互', conferences: ['CHI'], journals: ['TOG'] },
+  { area: '软件与安全', conferences: ['ICSE', 'CCS'], journals: [] },
+];
 
 // 每次加载的论文数，更多的点“加载更多”
 const PAGE_SIZE = 1000;
@@ -72,7 +79,7 @@ const OPENREVIEW_PREFIXES = {
 
 // 搜不到时用来提示“你是不是要找”的常见缩写
 const KNOWN_ACRONYMS = [
-  ...Object.values(POPULAR).flat().map((chip) => (typeof chip === 'string' ? chip : chip.label)),
+  ...POPULAR.flatMap((g) => [...g.conferences, ...g.journals]).map((chip) => (typeof chip === 'string' ? chip : chip.label)),
   'ICRA', 'IROS', 'RSS', 'CoRL', 'AISTATS', 'UAI', 'COLT', 'COLM', 'WACV', 'BMVC', 'MICCAI', 'ICASSP',
   'INTERSPEECH', 'ECAI', 'WSDM', 'CIKM', 'RecSys', 'ICDE', 'VLDB', 'EDBT', 'OSDI', 'SOSP', 'NSDI', 'EuroSys',
   'PLDI', 'POPL', 'OOPSLA', 'FSE', 'ASE', 'ISSTA', 'NDSS', 'CRYPTO', 'EUROCRYPT', 'STOC', 'FOCS', 'SODA',
@@ -735,14 +742,24 @@ function el(tag, props = {}, children = []) {
 
 function renderPopular() {
   const box = $('popular');
-  for (const [group, names] of Object.entries(POPULAR)) {
-    const row = el('div', { class: 'chip-row' }, [el('span', { class: 'chip-label', text: group })]);
-    for (const chip of names) {
+  box.append(el('div', { class: 'popular-row popular-head', 'aria-hidden': 'true' }, [
+    el('span'), el('span', { text: '会议' }), el('span', { text: '期刊' }),
+  ]));
+  const cell = (kind, chips) => {
+    const div = el('div', { class: 'popular-cell', 'data-kind': kind });
+    for (const chip of chips) {
       const { label, venue } = typeof chip === 'string' ? { label: chip } : chip;
       const restore = venue ? { venue, label } : {};
-      row.append(el('button', { type: 'button', class: 'chip', text: label, onclick: () => runSearch(label, restore) }));
+      div.append(el('button', { type: 'button', class: 'chip', text: label, onclick: () => runSearch(label, restore) }));
     }
-    box.append(row);
+    return div;
+  };
+  for (const { area, conferences, journals } of POPULAR) {
+    box.append(el('div', { class: 'popular-row', role: 'group', 'aria-label': area }, [
+      el('span', { class: 'popular-area', text: area }),
+      cell('会议', conferences),
+      cell('期刊', journals),
+    ]));
   }
 }
 

@@ -129,6 +129,29 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   gap: 8px;
   margin-top: 14px;
 }
+
+/* 常用会议和期刊：按方向分行，会议、期刊各一列 */
+.popular-row {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 6px 16px;
+  align-items: start;
+}
+.popular-head {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: -2px;
+}
+.popular-area {
+  padding-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.popular-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -364,6 +387,20 @@ a.year-btn.external:hover { color: var(--text); }
   padding-bottom: 40px;
   color: var(--muted);
   font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .popular-head { display: none; }
+  .popular-row { grid-template-columns: 1fr; gap: 6px; }
+  .popular-area { padding-top: 0; font-weight: 600; color: var(--text); }
+  .popular-cell:empty { display: none; }
+  .popular-cell::before {
+    content: attr(data-kind);
+    align-self: center;
+    margin-right: 2px;
+    color: var(--muted);
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 560px) {
