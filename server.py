@@ -4,11 +4,14 @@
 用法：
     python3 server.py            # 默认端口 8000
     python3 server.py 8080       # 指定端口
+    python3 server.py --login    # 登录 OpenReview（可选）
     python3 server.py --logout   # 删除保存的 OpenReview 登录令牌
 
-OpenReview 要求登录后才能查询。首次启动时会提示输入 OpenReview 账号，
-只在本机保存一个一周有效的令牌（.openreview_token），不保存密码。
-也可以用环境变量 OPENREVIEW_USERNAME、OPENREVIEW_PASSWORD 提供账号。
+OpenReview 现在要求登录后才能列出整个会场的论文。不登录时，网页会把 dblp
+尚未收录的年份显示为 OpenReview 网站的链接，在浏览器里打开即可查看。
+想在网页里直接列出这些论文，可以用 --login 登录：只在本机保存一个一周有效的
+令牌（.openreview_token），不保存密码。也可以用环境变量
+OPENREVIEW_USERNAME、OPENREVIEW_PASSWORD 提供账号。
 
 只用到 Python 标准库，不需要安装任何依赖。
 """
@@ -141,8 +144,8 @@ def fetch_upstream(query_string):
 _auth = {'token': None, 'username': None, 'password': None}
 _auth_lock = threading.Lock()
 
-CHALLENGE_HINT = ('OpenReview 现在要求登录后才能列出整个会场的论文（按标题搜索单篇论文不受影响）。'
-                  '要在这里列出论文，请在终端按 Ctrl + C 停止 server.py，重新运行 python3 server.py，按提示登录 OpenReview 账号。')
+CHALLENGE_HINT = ('OpenReview 现在要求登录后才能列出整个会场的论文。'
+                  '如需在网页里直接列出，请运行 python3 server.py --login 登录 OpenReview。')
 
 
 def openreview_login(username, password):
@@ -223,11 +226,13 @@ def setup_openreview(interactive=True):
     token = load_saved_token()
     if token:
         _auth['token'] = token
+        if interactive:
+            print('✓ 已使用保存的 OpenReview 登录（如需换账号，先运行 python3 server.py --logout）')
         return
     if not (interactive and sys.stdin.isatty()):
         return
-    print('OpenReview 现在要求登录后才能查询，用来补充 dblp 尚未收录的最新年份（例如 CoRL 2025）。')
-    print('登录后只在本机保存一个一周有效的令牌，不保存密码。')
+    print('登录 OpenReview 后，dblp 尚未收录的最新年份（例如 CoRL 2025）可以直接在网页里列出。')
+    print('只在本机保存一个一周有效的令牌，不保存密码。')
     while True:
         try:
             user = input('OpenReview 登录邮箱（直接回车跳过）：').strip()
@@ -258,8 +263,9 @@ OPENREVIEW_QUERIES = {
 NOTE_FIELDS = ('title', 'authors', 'pdf', 'venue', 'venueid')
 
 
-def error_json(message):
-    return json.dumps({'error': message}, ensure_ascii=False).encode('utf-8')
+def error_json(message, login_required=False):
+    data = {'error': message, **({'loginRequired': True} if login_required else {})}
+    return json.dumps(data, ensure_ascii=False).encode('utf-8')
 
 
 def slim(path, data):
@@ -297,10 +303,12 @@ def fetch_openreview(path, query_string):
 
     if status == 401 and token:
         forget_token(token)
-        return 401, error_json('OpenReview 登录已过期。请在终端按 Ctrl + C 停止 server.py，重新运行并登录。')
+        return 401, error_json('OpenReview 登录已过期。如需继续在网页里直接列出，请运行 python3 server.py --login 重新登录。',
+                               login_required=True)
     if status == 403 and b'Challenge' in body:
-        hint = CHALLENGE_HINT if not token else f'OpenReview 要求人机验证，登录后仍被拦截：{preview(body)}'
-        return 403, error_json(hint)
+        if token:
+            return 403, error_json(f'OpenReview 要求人机验证，登录后仍被拦截：{preview(body)}')
+        return 403, error_json(CHALLENGE_HINT, login_required=True)
     if status != 200:
         return status, body
     try:
@@ -413,15 +421,18 @@ def check_dblp():
     query = urllib.parse.urlencode({'content.venueid': 'ICLR.cc/2025/Conference', 'limit': 1})
     try:
         status, body = fetch_openreview('notes', query)
+        try:
+            data = json.loads(body) if status != 200 else {}
+        except ValueError:
+            data = {}
         if status == 200:
             login = '，已登录' if _auth['token'] else ''
             print(f'✓ OpenReview 连接正常（用于补充 dblp 尚未收录的年份{login}）')
+        elif data.get('loginRequired'):
+            print('· OpenReview 需要登录才能列出会场论文，网页会把 dblp 尚未收录的年份显示为 OpenReview 链接。'
+                  '（可选：python3 server.py --login）')
         else:
-            try:
-                detail = json.loads(body).get('error') or preview(body)
-            except (ValueError, AttributeError):
-                detail = preview(body)
-            print(f'✗ OpenReview：{detail}')
+            print(f'✗ OpenReview：{data.get("error") or preview(body)}')
     except UpstreamError as e:
         print(f'✗ {upstream_error_message(e, "OpenReview")}（dblp 尚未收录的年份将无法补充）')
 
@@ -435,9 +446,11 @@ def main():
         except OSError:
             print('没有保存的 OpenReview 登录令牌。')
         return
-    preferred = int(args[0]) if args else 8000
+    login = '--login' in args
+    ports = [a for a in args if a.isdigit()]
+    preferred = int(ports[0]) if ports else 8000
     try:
-        setup_openreview()
+        setup_openreview(interactive=login)
     except KeyboardInterrupt:
         print('\n已取消。')
         return

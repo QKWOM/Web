@@ -254,10 +254,12 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 
 .years-note {
   margin: 12px 0 0;
-  color: var(--danger);
   font-size: 13px;
 }
-.years-note a { font-weight: 600; }
+.years-note.error { color: var(--danger); }
+.years-note.info { color: var(--muted); }
+a.year-btn.external { border-style: dashed; text-decoration: none; }
+a.year-btn.external:hover { color: var(--text); }
 
 .year-form {
   display: flex;

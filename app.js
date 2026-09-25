@@ -122,16 +122,20 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /* ---------------- 网络请求 ---------------- */
 
 class ApiError extends Error {
-  constructor(message, { status = 0, network = false } = {}) {
+  constructor(message, { status = 0, network = false, loginRequired = false } = {}) {
     super(message);
     this.status = status;
     this.network = network;
+    this.loginRequired = loginRequired; // OpenReview 要求登录才能列出论文
   }
 }
 
 function preview(body) {
   return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 150) || '（空）';
 }
+
+// OpenReview 需要登录才能列出论文时，本次浏览不再请求它，改为给出网站链接
+let openreviewNeedsLogin = false;
 
 // 所有请求共用一个队列，并保持最小间隔
 let lastRequestAt = 0;
@@ -192,7 +196,10 @@ function createClient({ name, bases, accept, isValid }) {
       // server.py 的错误放在 error 字段，SPARQL 服务（QLever）的放在 exception 字段，OpenReview 的放在 message 字段
       const detail = data && (data.error || (data.exception && `${name} 查询出错：${data.exception}`)
         || (data.message && `${name} 返回错误：${data.message}`));
-      throw new ApiError(detail || `${name} 返回错误（HTTP ${res.status}）：${preview(body)}`, { status: res.status });
+      throw new ApiError(detail || `${name} 返回错误（HTTP ${res.status}）：${preview(body)}`, {
+        status: res.status,
+        loginRequired: !!(data && (data.loginRequired || /Challenge verification required/i.test(data.message || ''))),
+      });
     }
     if (!isValid(data)) {
       console.error(`${name} 返回的内容无法解析：`, body.slice(0, 2000));
@@ -903,11 +910,11 @@ async function selectVenue(venue, restore = {}) {
 
   // dblp 通常要过几个月才收录新会议，用 OpenReview 补上缺的年份（只针对会议）
   const isConference = !venue.type || venue.type === 'Conference or Workshop';
-  if (isConference && state.year === null) {
+  if (isConference && !openreviewNeedsLogin && state.year === null) {
     setStatus(`正在检查 OpenReview 上有没有 dblp 尚未收录的年份…`, 'loading');
   }
   const extra = [];
-  if (isConference) try {
+  if (isConference && !openreviewNeedsLogin) try {
     const known = new Set(state.years.map((y) => y.year));
     const candidates = (await openreviewCandidates(venue)).filter((y) => !known.has(y.year));
     for (const candidate of candidates) {
@@ -917,14 +924,17 @@ async function selectVenue(venue, restore = {}) {
     }
   } catch (err) {
     console.warn('OpenReview 暂时不可用：', err);
-    if (isCurrent()) {
-      showYearsNote(`OpenReview 查询失败，dblp 尚未收录的最新年份可能缺失。原因：${errorMessage(err)}`,
-        err.status === 401 || err.status === 403 ? openreviewPageLinks(venue) : []);
-    }
+    if (err.loginRequired) openreviewNeedsLogin = true;
+    else if (isCurrent()) showYearsNote(`OpenReview 查询失败，dblp 尚未收录的最新年份可能缺失。原因：${errorMessage(err)}`);
   }
   if (!isCurrent()) return;
-  if (extra.length) {
-    state.years = [...state.years, ...extra].sort((a, b) => b.year - a.year);
+  // 没有登录 OpenReview：把 dblp 尚未收录的最近几年显示为 OpenReview 网站的链接
+  const links = isConference && openreviewNeedsLogin ? openreviewPageLinks(venue) : [];
+  if (links.length) {
+    showYearsNote('带 ↗ 的年份 dblp 尚未收录，点击在 OpenReview 网站上查看录用论文。', 'info');
+  }
+  if (extra.length || links.length) {
+    state.years = [...state.years, ...extra, ...links].sort((a, b) => b.year - a.year);
     renderYears();
   }
 
@@ -943,20 +953,14 @@ async function selectVenue(venue, restore = {}) {
   }
 }
 
-function showYearsNote(message, links = []) {
+function showYearsNote(message, kind = 'error') {
   const note = $('years-note');
   note.textContent = message;
-  if (links.length) {
-    note.append(el('br'), '也可以直接在 OpenReview 网站上查看：');
-    links.forEach(({ text, href }, i) => {
-      if (i) note.append(' · ');
-      note.append(el('a', { href, target: '_blank', rel: 'noopener', text }));
-    });
-  }
+  note.className = `years-note ${kind}`;
   note.hidden = !message;
 }
 
-// 没登录 OpenReview 时，给出 dblp 尚未收录的最近几年在 OpenReview 网站上的会场页面（浏览器里可以正常访问）
+// dblp 尚未收录的最近几年在 OpenReview 网站上的会场页面（在浏览器里可以正常打开）
 function openreviewPageLinks(venue) {
   const names = withAliases([venue.acronym || '', venue.stream.split('/').pop()]);
   const prefix = names.map((n) => OPENREVIEW_PREFIXES[n]).find(Boolean);
@@ -966,7 +970,9 @@ function openreviewPageLinks(venue) {
   return [now, now - 1, now - 2]
     .filter((year) => !known.has(year) && year > Math.max(0, ...known))
     .map((year) => ({
-      text: `${venueLabel(venue)} ${year}`,
+      year,
+      count: 0,
+      source: 'openreview-link',
       href: `https://openreview.net/group?id=${encodeURIComponent(`${prefix}/${year}/Conference`)}`,
     }));
 }
@@ -974,7 +980,20 @@ function openreviewPageLinks(venue) {
 function renderYears() {
   const box = $('years');
   box.textContent = '';
-  for (const { year, count, source } of state.years) {
+  for (const { year, count, source, href } of state.years) {
+    if (source === 'openreview-link') {
+      box.append(el('a', {
+        class: 'year-btn external',
+        href,
+        target: '_blank',
+        rel: 'noopener',
+        title: `在 OpenReview 网站上查看 ${year} 年的录用论文`,
+      }, [
+        el('span', { class: 'year-num', text: `${year} ↗` }),
+        el('span', { class: 'year-source', text: 'OpenReview' }),
+      ]));
+      continue;
+    }
     const btn = el('button', {
       type: 'button',
       class: 'year-btn',
@@ -991,7 +1010,7 @@ function renderYears() {
 }
 
 function markYear() {
-  for (const btn of document.querySelectorAll('.year-btn')) {
+  for (const btn of document.querySelectorAll('button.year-btn')) {
     btn.setAttribute('aria-pressed', String(Number(btn.dataset.year) === state.year));
   }
 }
@@ -1007,6 +1026,10 @@ async function loadYear(year) {
   setStatus(`正在加载 ${venueLabel(venue)} ${year} 的论文…`, 'loading');
 
   const entry = state.years.find((y) => y.year === year);
+  if (entry && entry.source === 'openreview-link') {
+    setStatus(`dblp 尚未收录 ${venueLabel(venue)} ${year}，请点击带 ↗ 的 ${year} 年份，在 OpenReview 网站上查看。`);
+    return;
+  }
   const fromOpenReview = !!entry && entry.source === 'openreview';
   state.paging = {
     load: (offset) => (fromOpenReview ? fetchOpenReviewPapers(venue, entry, offset) : fetchPapers(venue, year, offset)),
