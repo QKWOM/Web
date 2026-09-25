@@ -20,7 +20,7 @@ const CONFIG = {
 
 const POPULAR = {
   会议: [
-    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'ACL',
+    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'CoRL', 'ICRA', 'IROS', 'RSS', 'ACL',
     'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
   ],
   期刊: ['TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL'],
@@ -346,6 +346,8 @@ const PDF_RULES = [
     (m) => `https://www.ijcai.org/proceedings/${m[1]}/${m[2].padStart(4, '0')}.pdf`],
   [/^https:\/\/(?:www\.)?jmlr\.org\/papers\/v(\d+)\/([^/]+)\.html$/i, (m) => `https://jmlr.org/papers/volume${m[1]}/${m[2]}/${m[2]}.pdf`],
   [/^https:\/\/(?:www\.)?isca-archive\.org\/(.+)\.html$/i, (m) => `https://www.isca-archive.org/${m[1]}.pdf`],
+  // RSS（Robotics: Science and Systems）：rss20/p001.html → rss20/p001.pdf
+  [/^https:\/\/(?:www\.)?roboticsproceedings\.org\/(rss\d+\/p\d+)\.html$/i, (m) => `https://www.roboticsproceedings.org/${m[1]}.pdf`],
 ];
 
 function pdfLink(links) {
