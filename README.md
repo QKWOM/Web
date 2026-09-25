@@ -23,6 +23,8 @@
 python3 server.py
 ```
 
+首次启动时会提示登录 OpenReview（用于补充 dblp 尚未收录的最新年份，见下文），不需要的话直接回车跳过。
+
 会自动打开浏览器，地址以终端里显示的为准（默认 <http://127.0.0.1:8000>，端口被占用时会自动换一个）。终端里还会显示 dblp 查询服务和 OpenReview 是否连接正常。按 `Ctrl + C` 停止。
 
 > 请不要用 `python3 -m http.server` 或直接双击 `index.html` 打开：浏览器通常会因为跨域限制拦截对 dblp 的请求，`server.py` 会在本机代为请求 dblp，从而绕过这个限制。
@@ -58,6 +60,20 @@ dblp 通常要在会议结束几个月后才收录论文集。选中一个会议
 - 只使用主会场，不包括 workshop、Datasets and Benchmarks 等分会场。
 - 有的会议只用 OpenReview 审稿，不公开论文（例如 CVPR）。这类会场查不到已录用的论文，不会显示。
 - OpenReview 连不上时不影响 dblp 的数据，只是少了补充的年份，年份按钮下方会显示原因。
+
+### OpenReview 登录
+
+OpenReview 现在会对匿名的 API 请求做人机验证（返回“Challenge verification required”），登录后的请求不受影响。所以 `server.py` 需要用你的 OpenReview 账号登录：
+
+- 首次启动时在终端里输入 OpenReview 登录邮箱和密码（密码输入时不显示）。直接回车可以跳过，dblp 的数据不受影响。
+- 只在本机保存一个一周有效的登录令牌（项目目录下的 `.openreview_token`，仅当前用户可读，不会提交到 git），不保存密码。令牌过期后再次启动时会重新提示。
+- 也可以用环境变量提供账号：`OPENREVIEW_USERNAME=邮箱 OPENREVIEW_PASSWORD=密码 python3 server.py`，这时令牌过期会自动重新登录。
+- 退出登录：`python3 server.py --logout`。
+- 暂不支持开启了两步验证的账号。
+
+登录令牌只留在 `server.py` 里，不会发给网页。中转只允许两种只读查询（某个会场的已录用论文、会场列表），返回给网页的只有标题、作者、PDF 等字段；并且只接受来自本机地址（`127.0.0.1` / `localhost`）的请求。
+
+在线部署（GitHub Pages）时没有 `server.py`，OpenReview 的补充年份无法使用。
 
 ### 年份的计算
 
