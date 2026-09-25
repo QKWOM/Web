@@ -130,26 +130,30 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   margin-top: 14px;
 }
 
-/* 常用会议和期刊：按方向分行，会议、期刊各一列 */
+/* 常用会议和期刊：按方向分行，会议、期刊各一列，方向之间用细线分隔 */
+#popular { gap: 0; }
 .popular-row {
   display: grid;
   grid-template-columns: 8rem minmax(0, 1fr) minmax(0, 1.25fr);
   gap: 6px 16px;
-  align-items: start;
+  align-items: center;
+  padding: 8px 0;
 }
+.popular-row:not(.popular-head) { border-top: 1px solid var(--border); }
 .popular-head {
+  padding: 0 0 6px;
   color: var(--muted);
   font-size: 12px;
-  margin-bottom: -2px;
+  text-align: center;
 }
 .popular-area {
-  padding-top: 5px;
   color: var(--muted);
   font-size: 13px;
 }
 .popular-cell {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
 }
 .chip-row {
@@ -391,8 +395,10 @@ a.year-btn.external:hover { color: var(--text); }
 
 @media (max-width: 720px) {
   .popular-head { display: none; }
-  .popular-row { grid-template-columns: 1fr; gap: 6px; }
-  .popular-area { padding-top: 0; font-weight: 600; color: var(--text); }
+  .popular-row { grid-template-columns: 1fr; gap: 6px; padding: 10px 0; }
+  .popular-row:nth-child(2) { border-top: 0; padding-top: 0; }
+  .popular-area { font-weight: 600; color: var(--text); }
+  .popular-cell { justify-content: flex-start; }
   .popular-cell:empty { display: none; }
   .popular-cell::before {
     content: attr(data-kind);
