@@ -18,12 +18,27 @@ const CONFIG = {
   minGapMs: 300, // 两次请求之间的最小间隔，避免给服务器造成压力
 };
 
+// 常用按钮；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
 const POPULAR = {
   会议: [
-    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'CoRL', 'ICRA', 'IROS', 'RSS', 'ACL',
+    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'ACL',
     'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
   ],
   期刊: ['TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL'],
+  机器人: [
+    { label: 'CoRL', venue: 'conf/corl' },
+    { label: 'ICRA', venue: 'conf/icra' },
+    { label: 'IROS', venue: 'conf/iros' },
+    { label: 'RSS', venue: 'conf/rss' },
+    { label: 'T-RO', venue: 'journals/trob' },
+    { label: 'IJRR', venue: 'journals/ijrr' },
+    { label: 'RA-L', venue: 'journals/ral' },
+    { label: 'Science Robotics', venue: 'journals/scirobotics' },
+    { label: 'RAM', venue: 'journals/ram' },
+    { label: 'AURO', venue: 'journals/arobots' },
+    { label: 'JFR', venue: 'journals/jfr' },
+    { label: 'RAS', venue: 'journals/ras' },
+  ],
 };
 
 // 每次加载的论文数，更多的点“加载更多”
@@ -39,6 +54,8 @@ const ALIAS_GROUPS = [
   ['ra-l', 'ral'],
   ['vldb', 'pvldb'],
   ['aij', 'ai'],
+  ['auro', 'arobots'],
+  ['science robotics', 'scirobotics'],
 ];
 
 // 在 OpenReview 上发布论文的常见会议：主会场 ID 为“前缀/年份/Conference”
@@ -55,7 +72,7 @@ const OPENREVIEW_PREFIXES = {
 
 // 搜不到时用来提示“你是不是要找”的常见缩写
 const KNOWN_ACRONYMS = [
-  ...Object.values(POPULAR).flat(),
+  ...Object.values(POPULAR).flat().map((chip) => (typeof chip === 'string' ? chip : chip.label)),
   'ICRA', 'IROS', 'RSS', 'CoRL', 'AISTATS', 'UAI', 'COLT', 'COLM', 'WACV', 'BMVC', 'MICCAI', 'ICASSP',
   'INTERSPEECH', 'ECAI', 'WSDM', 'CIKM', 'RecSys', 'ICDE', 'VLDB', 'EDBT', 'OSDI', 'SOSP', 'NSDI', 'EuroSys',
   'PLDI', 'POPL', 'OOPSLA', 'FSE', 'ASE', 'ISSTA', 'NDSS', 'CRYPTO', 'EUROCRYPT', 'STOC', 'FOCS', 'SODA',
@@ -713,8 +730,10 @@ function renderPopular() {
   const box = $('popular');
   for (const [group, names] of Object.entries(POPULAR)) {
     const row = el('div', { class: 'chip-row' }, [el('span', { class: 'chip-label', text: group })]);
-    for (const name of names) {
-      row.append(el('button', { type: 'button', class: 'chip', text: name, onclick: () => runSearch(name) }));
+    for (const chip of names) {
+      const { label, venue } = typeof chip === 'string' ? { label: chip } : chip;
+      const restore = venue ? { venue, label } : {};
+      row.append(el('button', { type: 'button', class: 'chip', text: label, onclick: () => runSearch(label, restore) }));
     }
     box.append(row);
   }
@@ -748,6 +767,10 @@ async function runSearch(query, restore = {}) {
   if (!isCurrent()) return;
 
   state.venues = venues;
+  if (!venues.length && restore.venue && STREAM_KEY.test(restore.venue)) {
+    selectVenue(fallbackVenue(restore.venue, restore.label), restore);
+    return;
+  }
   if (!venues.length) {
     const guesses = didYouMean(query);
     setStatus(`没有找到名称包含“${query}”的会议或期刊，`
@@ -759,9 +782,9 @@ async function runSearch(query, restore = {}) {
 
   const wanted = restore.venue && venues.find((v) => v.stream === restore.venue);
   if (wanted) {
-    selectVenue(wanted, restore);
+    selectVenue(restore.label ? { ...wanted, acronym: restore.label } : wanted, restore);
   } else if (restore.venue && STREAM_KEY.test(restore.venue)) {
-    selectVenue(fallbackVenue(restore.venue), restore);
+    selectVenue(fallbackVenue(restore.venue, restore.label), restore);
   } else if (venues.length === 1 || venueScore(venues[0], query) >= 100) {
     selectVenue(venues[0]);
   } else {
@@ -813,9 +836,11 @@ function showSuggestions(names) {
   }
 }
 
-function fallbackVenue(stream) {
-  const key = stream.split('/').pop();
-  return { stream, name: key.toUpperCase(), acronym: key.toUpperCase(), type: '', url: `https://dblp.org/db/${stream}/` };
+function fallbackVenue(stream, label) {
+  const [kind, key] = stream.split('/');
+  const name = label || key.toUpperCase();
+  const type = kind === 'journals' ? 'Journal' : kind === 'conf' ? 'Conference or Workshop' : '';
+  return { stream, name, acronym: name, type, url: `https://dblp.org/db/${stream}/` };
 }
 
 function renderVenues() {
@@ -853,7 +878,7 @@ async function selectVenue(venue, restore = {}) {
   hideFrom('years-section');
   syncUrl();
 
-  const showAcronym = venue.acronym && !venue.name.includes(`(${venue.acronym})`);
+  const showAcronym = venue.acronym && venue.acronym !== venue.name && !venue.name.includes(`(${venue.acronym})`);
   $('venue-title').textContent = showAcronym ? `${venue.acronym} · ${venue.name}` : venue.name;
   $('venue-link').href = venue.url;
   $('years').textContent = '';
