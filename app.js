@@ -918,7 +918,8 @@ async function selectVenue(venue, restore = {}) {
   } catch (err) {
     console.warn('OpenReview 暂时不可用：', err);
     if (isCurrent()) {
-      showYearsNote(`OpenReview 查询失败，dblp 尚未收录的最新年份可能缺失。原因：${errorMessage(err)}`);
+      showYearsNote(`OpenReview 查询失败，dblp 尚未收录的最新年份可能缺失。原因：${errorMessage(err)}`,
+        err.status === 401 || err.status === 403 ? openreviewPageLinks(venue) : []);
     }
   }
   if (!isCurrent()) return;
@@ -942,10 +943,32 @@ async function selectVenue(venue, restore = {}) {
   }
 }
 
-function showYearsNote(message) {
+function showYearsNote(message, links = []) {
   const note = $('years-note');
   note.textContent = message;
+  if (links.length) {
+    note.append(el('br'), '也可以直接在 OpenReview 网站上查看：');
+    links.forEach(({ text, href }, i) => {
+      if (i) note.append(' · ');
+      note.append(el('a', { href, target: '_blank', rel: 'noopener', text }));
+    });
+  }
   note.hidden = !message;
+}
+
+// 没登录 OpenReview 时，给出 dblp 尚未收录的最近几年在 OpenReview 网站上的会场页面（浏览器里可以正常访问）
+function openreviewPageLinks(venue) {
+  const names = withAliases([venue.acronym || '', venue.stream.split('/').pop()]);
+  const prefix = names.map((n) => OPENREVIEW_PREFIXES[n]).find(Boolean);
+  if (!prefix) return [];
+  const known = new Set(state.years.map((y) => y.year));
+  const now = new Date().getFullYear();
+  return [now, now - 1, now - 2]
+    .filter((year) => !known.has(year) && year > Math.max(0, ...known))
+    .map((year) => ({
+      text: `${venueLabel(venue)} ${year}`,
+      href: `https://openreview.net/group?id=${encodeURIComponent(`${prefix}/${year}/Conference`)}`,
+    }));
 }
 
 function renderYears() {

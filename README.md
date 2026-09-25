@@ -63,13 +63,14 @@ dblp 通常要在会议结束几个月后才收录论文集。选中一个会议
 
 ### OpenReview 登录
 
-OpenReview 现在会对匿名的 API 请求做人机验证（返回“Challenge verification required”），登录后的请求不受影响。所以 `server.py` 需要用你的 OpenReview 账号登录：
+OpenReview 现在会对匿名的“列表”请求做人机验证：按会场列出论文（`/notes?content.venueid=…`）会返回“Challenge verification required”，登录后的请求不受影响；按标题搜索单篇论文（`/notes/search`）目前不受影响，但无法用来列出整个会场。所以要在这里列出 OpenReview 上的论文，`server.py` 需要用你的 OpenReview 账号登录：
 
 - 首次启动时在终端里输入 OpenReview 登录邮箱和密码（密码输入时不显示）。直接回车可以跳过，dblp 的数据不受影响。
 - 只在本机保存一个一周有效的登录令牌（项目目录下的 `.openreview_token`，仅当前用户可读，不会提交到 git），不保存密码。令牌过期后再次启动时会重新提示。
 - 也可以用环境变量提供账号：`OPENREVIEW_USERNAME=邮箱 OPENREVIEW_PASSWORD=密码 python3 server.py`，这时令牌过期会自动重新登录。
 - 退出登录：`python3 server.py --logout`。
 - 暂不支持开启了两步验证的账号。
+- 不登录也可以：年份下方会给出 dblp 尚未收录的年份在 OpenReview 网站上的会场页面链接（例如 CoRL 2025），在浏览器里打开就能看到录用论文。
 
 登录令牌只留在 `server.py` 里，不会发给网页。中转只允许两种只读查询（某个会场的已录用论文、会场列表），返回给网页的只有标题、作者、PDF 等字段；并且只接受来自本机地址（`127.0.0.1` / `localhost`）的请求。
 

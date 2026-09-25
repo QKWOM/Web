@@ -141,8 +141,8 @@ def fetch_upstream(query_string):
 _auth = {'token': None, 'username': None, 'password': None}
 _auth_lock = threading.Lock()
 
-CHALLENGE_HINT = ('OpenReview 现在要求登录后才能查询（匿名请求会被人机验证拦下）。'
-                  '请在终端按 Ctrl + C 停止 server.py，重新运行 python3 server.py，按提示登录 OpenReview 账号。')
+CHALLENGE_HINT = ('OpenReview 现在要求登录后才能列出整个会场的论文（按标题搜索单篇论文不受影响）。'
+                  '要在这里列出论文，请在终端按 Ctrl + C 停止 server.py，重新运行 python3 server.py，按提示登录 OpenReview 账号。')
 
 
 def openreview_login(username, password):

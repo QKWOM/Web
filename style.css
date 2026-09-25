@@ -257,6 +257,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
   color: var(--danger);
   font-size: 13px;
 }
+.years-note a { font-weight: 600; }
 
 .year-form {
   display: flex;
