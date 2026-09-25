@@ -21,15 +21,15 @@ const CONFIG = {
 // 常用按钮；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
 const POPULAR = {
   会议: [
-    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI', 'ACL',
-    'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
-  ],
-  期刊: ['TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL'],
-  机器人: [
+    'CVPR', 'ICCV', 'ECCV', 'NeurIPS', 'ICML', 'ICLR', 'AAAI', 'IJCAI',
     { label: 'CoRL', venue: 'conf/corl' },
     { label: 'ICRA', venue: 'conf/icra' },
     { label: 'IROS', venue: 'conf/iros' },
     { label: 'RSS', venue: 'conf/rss' },
+    'ACL', 'EMNLP', 'NAACL', 'KDD', 'WWW', 'SIGIR', 'SIGMOD', 'CHI', 'ICSE', 'CCS',
+  ],
+  期刊: [
+    'TPAMI', 'IJCV', 'TIP', 'JMLR', 'TMLR', 'TKDE', 'TNNLS', 'TOG', 'PVLDB', 'TACL',
     { label: 'T-RO', venue: 'journals/trob' },
     { label: 'IJRR', venue: 'journals/ijrr' },
     { label: 'RA-L', venue: 'journals/ral' },

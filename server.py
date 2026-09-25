@@ -343,6 +343,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    def end_headers(self):
+        # 网页文件每次都让浏览器检查更新，否则 git pull 之后浏览器可能还在用旧的 app.js
+        if not self.path.lstrip('/').startswith(('dblp-proxy/', 'openreview-proxy/')):
+            self.send_header('Cache-Control', 'no-cache')
+        super().end_headers()
+
     def proxy(self, route, path, query_string):
         try:
             if route == 'dblp-proxy' and path == 'sparql':

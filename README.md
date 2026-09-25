@@ -6,7 +6,7 @@
 
 ## 功能
 
-- 常用按钮分三行：会议、期刊、机器人（CoRL、ICRA、IROS、RSS、T-RO、IJRR、RA-L、Science Robotics、RAM、AURO、JFR、RAS）
+- 常用按钮分会议、期刊两行，包括机器人方向的顶会（CoRL、ICRA、IROS、RSS）和期刊（T-RO、IJRR、RA-L、Science Robotics、RAM、AURO、JFR、RAS）
 - 按会议或期刊的名称、缩写搜索，拼错时（如 ICRL）会提示可能的名称（ICLR、ICRA）；同名的会议、workshop 和期刊会列出来供选择；TPAMI、TNNLS 这类和 dblp 标识不一致的常用缩写也能直接搜
 - 列出所有年份及每年的论文数量，点击年份加载论文；每次加载 1000 篇，更多的点“加载更多”
 - 会议中 dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
