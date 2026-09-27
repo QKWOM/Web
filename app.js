@@ -24,6 +24,12 @@ const CONFIG = {
     'https://cdn.jsdelivr.net/gh/Xovee/cs-conf-stats@main/data/conf.json',
     'https://raw.githubusercontent.com/Xovee/cs-conf-stats/main/data/conf.json',
   ],
+  // 会议投稿截止日期：ccf-deadlines（https://ccfddl.com，社区维护）的汇总文件，按顺序尝试
+  deadlines: [
+    'https://cdn.jsdelivr.net/gh/ccfddl/ccfddl.github.io@page/conference/allconf.json',
+    'https://raw.githubusercontent.com/ccfddl/ccfddl.github.io/page/conference/allconf.json',
+    'https://ccfddl.com/conference/allconf.json',
+  ],
 };
 
 // 常用按钮，按研究方向分组；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
@@ -282,6 +288,13 @@ const confStatsClient = createClient({
   bases: CONFIG.confStats,
   accept: 'application/json',
   isValid: (d) => !!(d && Array.isArray(d.conferences)),
+});
+
+const deadlinesClient = createClient({
+  name: 'ccf-deadlines',
+  bases: CONFIG.deadlines,
+  accept: 'application/json',
+  isValid: (d) => Array.isArray(d),
 });
 
 async function sparql(query) {
@@ -757,23 +770,111 @@ function slimConfStats(data) {
   return index;
 }
 
-let confStatsPending = null;
-function loadConfStats() {
-  const cached = store.get('confstats');
+// 外部数据文件：整理后在浏览器里缓存一天；同一个文件同时只请求一次
+const pendingDatasets = new Map();
+function loadDataset(name, client, slim) {
+  const cached = store.get(name);
   if (cached) return Promise.resolve(cached);
-  if (!confStatsPending) {
-    confStatsPending = confStatsClient.get('').then((data) => {
-      const index = slimConfStats(data);
-      store.set('confstats', index, DAY);
-      return index;
+  if (!pendingDatasets.has(name)) {
+    pendingDatasets.set(name, client.get('').then((data) => {
+      const value = slim(data);
+      store.set(name, value, DAY);
+      return value;
     }).finally(() => {
-      confStatsPending = null;
-    });
+      pendingDatasets.delete(name);
+    }));
   }
-  return confStatsPending;
+  return pendingDatasets.get(name);
 }
 
-/* ---------------- 界面 ---------------- */
+const loadConfStats = () => loadDataset('confstats', confStatsClient, slimConfStats);
+
+/* ---------------- 投稿截止日期数据 ---------------- */
+
+// 只保留用到的字段：{ dblp 标识（小写）: [{ title, rank, editions: [{ year, link, tz, date, place, timeline: [{ a, d, c }] }] }] }
+// a、d 是摘要和全文截止时间（'YYYY-MM-DD HH:MM:SS' 或 'TBD'），c 是说明
+function slimDeadlines(data) {
+  const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const index = {};
+  for (const conf of data) {
+    const key = conf && text(conf.dblp, 40).toLowerCase();
+    if (!key || key === 'n' || !/^[a-z0-9_-]+$/.test(key) || !Array.isArray(conf.confs)) continue;
+    const editions = [];
+    for (const edition of conf.confs) {
+      if (!edition || !Number.isInteger(edition.year) || !Array.isArray(edition.timeline)) continue;
+      const timeline = edition.timeline
+        .map((t) => ({ a: text(t && t.abstract_deadline, 40), d: text(t && t.deadline, 40), c: text(t && t.comment, 300) }))
+        .filter((t) => t.a || t.d);
+      if (!timeline.length) continue;
+      editions.push({
+        year: edition.year,
+        link: safeUrl(text(edition.link, 300)),
+        tz: text(edition.timezone, 20),
+        date: text(edition.date, 80),
+        place: text(edition.place, 120),
+        timeline,
+      });
+    }
+    if (!editions.length) continue;
+    editions.sort((a, b) => a.year - b.year);
+    const rank = conf.rank || {};
+    (index[key] = index[key] || []).push({
+      title: text(conf.title, 40),
+      rank: { ccf: text(rank.ccf, 3), core: text(rank.core, 3), thcpl: text(rank.thcpl, 3) },
+      editions,
+    });
+  }
+  return index;
+}
+
+const loadDeadlines = () => loadDataset('deadlines', deadlinesClient, slimDeadlines);
+
+// ccf-deadlines 里的 dblp 字段就是 dblp 会议标识（conf/ 后面的部分）；同一标识有多条时（例如 CCS 和 AsiaCCS），选名称一致的
+function deadlineEntry(venue, index) {
+  const [kind, key] = venue.stream.split('/');
+  const list = kind === 'conf' ? index[key.toLowerCase()] : null;
+  if (!list) return null;
+  const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return list.find((e) => norm(e.title) === norm(venue.acronym))
+    || list.find((e) => norm(e.title) === norm(key))
+    || list[0];
+}
+
+// 时区与 UTC 的差（分钟）。AoE 即 UTC-12；PT 是美国太平洋时间，要看当时是否夏令时；认不出的返回 null
+const NAMED_ZONES = { PT: 'America/Los_Angeles', ET: 'America/New_York', CET: 'Europe/Paris', CEST: 'Europe/Paris' };
+const FIXED_ZONES = { AOE: -720, UTC: 0, GMT: 0, Z: 0, PST: -480, PDT: -420, EST: -300, EDT: -240, JST: 540, KST: 540 };
+function zoneOffsetMinutes(tz, wall) {
+  const t = tz.trim().toUpperCase();
+  if (t in FIXED_ZONES) return FIXED_ZONES[t];
+  const m = /^(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$/.exec(t);
+  if (m) return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0));
+  const zone = NAMED_ZONES[t];
+  if (!zone) return null;
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric',
+    });
+    const offsetAt = (utc) => {
+      const p = Object.fromEntries(fmt.formatToParts(new Date(utc)).map((x) => [x.type, x.value]));
+      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(utc / 60000) * 60000;
+    };
+    return Math.round(offsetAt(wall - offsetAt(wall)) / 60000);
+  } catch (err) {
+    return null;
+  }
+}
+
+// 截止时间 → { utc, wall, tz }；utc 为 null 表示时区认不出，只能按原样显示；无法解析（如 TBD）返回 null
+function parseDeadline(value, tz) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value || '');
+  if (!m) return null;
+  const [y, mo, d, h = 23, mi = 59, sec = 59] = m.slice(1).map((v) => (v === undefined ? undefined : Number(v)));
+  const wall = Date.UTC(y, mo - 1, d, h, mi, sec);
+  const offset = zoneOffsetMinutes(tz || 'AoE', wall);
+  return { wall, tz: tz || 'AoE', utc: offset === null ? null : wall - offset * 60000 };
+}
+
+/* ---------------- 界面 ---------------- *//* ---------------- 界面 ---------------- */
 
 const state = {
   query: '',
@@ -871,7 +972,7 @@ function renderPopular() {
 }
 
 function hideFrom(section) {
-  const order = ['venues-section', 'years-section', 'trend-section', 'papers-section'];
+  const order = ['venues-section', 'years-section', 'deadline-section', 'trend-section', 'papers-section'];
   for (const id of order.slice(order.indexOf(section))) $(id).hidden = true;
 }
 
@@ -1016,6 +1117,7 @@ async function selectVenue(venue, restore = {}) {
   $('years').textContent = '';
   showYearsNote('');
   $('years-section').hidden = false;
+  showDeadlines(venue, isCurrent);
   setStatus(`正在获取 ${venueLabel(venue)} 的年份列表…`, 'loading');
 
   try {
@@ -1134,6 +1236,178 @@ function renderYears() {
     btn.dataset.year = year;
     box.append(btn);
   }
+}
+
+/* ---------------- 投稿截止日期 ---------------- */
+
+const deadlineView = { venue: null, entry: null, error: null };
+const pad2 = (n) => String(n).padStart(2, '0');
+const WEEKDAYS = '日一二三四五六';
+
+// 官方公布的时间（不做换算，不显示秒）
+function formatWall(wall) {
+  const d = new Date(wall);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
+// 换算成浏览器所在时区
+function formatLocal(utc) {
+  const d = new Date(utc);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}（周${WEEKDAYS[d.getDay()]}）${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function localZoneLabel(utc) {
+  let zone = '';
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (err) {
+    /* 取不到时区名时显示 UTC 偏移 */
+  }
+  if (/^(Asia\/(Shanghai|Chongqing|Chungking|Harbin)|PRC)$/.test(zone)) return '北京时间';
+  const offset = -new Date(utc).getTimezoneOffset();
+  const abs = Math.abs(offset);
+  return `本地时间 UTC${offset < 0 ? '-' : '+'}${Math.floor(abs / 60)}${abs % 60 ? ':' + pad2(abs % 60) : ''}`;
+}
+
+function timeLeft(utc, now) {
+  const diff = utc - now;
+  if (diff <= 0) return '已截止';
+  if (diff >= DAY) return `还剩 ${Math.floor(diff / DAY)} 天`;
+  if (diff >= 3600000) return `还剩 ${Math.floor(diff / 3600000)} 小时`;
+  return `还剩 ${Math.max(1, Math.floor(diff / 60000))} 分钟`;
+}
+
+// 一届会议最晚的截止时间（毫秒）；全部待定时为 null
+function lastDeadline(edition) {
+  let last = null;
+  for (const round of edition.timeline) {
+    for (const value of [round.a, round.d]) {
+      const p = parseDeadline(value, edition.tz);
+      const at = p ? (p.utc === null ? p.wall : p.utc) : null;
+      if (at !== null && (last === null || at > last)) last = at;
+    }
+  }
+  return last;
+}
+
+// 下一届：还有截止时间没过的最早一届；或者比已截止的各届都新、时间待定的一届
+function nextEdition(editions, now) {
+  const pastYears = editions.filter((e) => {
+    const last = lastDeadline(e);
+    return last !== null && last < now;
+  }).map((e) => e.year);
+  const newestPast = Math.max(0, ...pastYears);
+  return editions.find((e) => {
+    const last = lastDeadline(e);
+    return last === null ? e.year > newestPast : last >= now;
+  }) || null;
+}
+
+function deadlineItem(kind, value, edition, now) {
+  const item = el('li', { class: 'dl-item' }, [el('span', { class: 'dl-kind', text: kind })]);
+  const p = parseDeadline(value, edition.tz);
+  if (!p) {
+    item.append(el('span', { class: 'dl-time' }, [el('strong', { text: '待定' })]));
+    return item;
+  }
+  const official = `官方时间 ${formatWall(p.wall)} ${p.tz}`;
+  if (p.utc === null) {
+    item.append(el('span', { class: 'dl-time' }, [el('strong', { text: `${formatWall(p.wall)} ${p.tz}` })]));
+    return item;
+  }
+  item.classList.add(p.utc < now ? 'passed' : 'upcoming');
+  item.append(
+    el('span', { class: 'dl-time' }, [el('strong', { text: formatLocal(p.utc) }), el('span', { class: 'muted', text: ` ${localZoneLabel(p.utc)}` })]),
+    el('span', { class: 'dl-orig', text: official }),
+    el('span', { class: 'dl-left', text: timeLeft(p.utc, now) }),
+  );
+  return item;
+}
+
+function editionBlock(venue, edition, now) {
+  const meta = [edition.date, edition.place].filter(Boolean).join(' · ');
+  const box = el('div', { class: 'dl-edition' }, [el('div', { class: 'dl-edition-head' }, [
+    el('strong', { text: `${venueLabel(venue)} ${edition.year}` }),
+    meta ? el('span', { class: 'muted', text: meta }) : null,
+    edition.link ? el('a', { href: edition.link, target: '_blank', rel: 'noopener', text: '会议官网 ↗' }) : null,
+  ])]);
+  // 多轮投稿时说明写在每一轮上方（例如 first round），只有一轮时写在下方作为备注
+  const rounds = edition.timeline.length > 1;
+  for (const round of edition.timeline) {
+    const list = el('ul', { class: 'dl-list' });
+    if (round.a) list.append(deadlineItem('摘要截止', round.a, edition, now));
+    list.append(deadlineItem(round.a ? '全文截止' : '投稿截止', round.d, edition, now));
+    const comment = round.c ? el('p', { class: rounds ? 'dl-comment dl-round' : 'dl-comment', text: round.c }) : null;
+    box.append(el('div', { class: 'dl-block' }, rounds ? [comment, list] : [list, comment]));
+  }
+  return box;
+}
+
+function deadlineHistory(entry) {
+  const table = $('deadline-history');
+  const head = table.querySelector('thead');
+  const body = table.querySelector('tbody');
+  head.textContent = '';
+  body.textContent = '';
+  const columns = ['年份', '摘要截止', '全文截止', '时区', '会议日期', '地点', '说明'];
+  head.append(el('tr', {}, columns.map((name) => el('th', { scope: 'col', text: name }))));
+  const shown = (value) => (parseDeadline(value, 'UTC') ? formatWall(parseDeadline(value, 'UTC').wall) : (value ? '待定' : '—'));
+  for (const edition of [...entry.editions].reverse()) {
+    for (const round of edition.timeline) {
+      const cells = [String(edition.year), shown(round.a), shown(round.d), edition.tz, edition.date, edition.place, round.c];
+      body.append(el('tr', {}, cells.map((text, i) => el('td', { class: i === 6 ? 'note-cell' : '', text: text || '' }))));
+    }
+  }
+  table.hidden = entry.editions.length < 2;
+}
+
+function renderDeadlines() {
+  const { venue, entry, error } = deadlineView;
+  if (!venue || venue !== state.venue) return;
+  const now = Date.now();
+  const current = $('deadline-current');
+  const note = $('deadline-note');
+  const rank = $('deadline-rank');
+  current.textContent = '';
+  rank.textContent = '';
+  note.textContent = '';
+  $('deadline-title').textContent = `${venueLabel(venue)} 投稿截止日期`;
+  $('deadline-history').hidden = true;
+
+  if (error) {
+    note.textContent = `投稿截止日期加载失败（${error.message}），请稍后刷新重试。`;
+  } else if (!entry) {
+    note.textContent = `ccf-deadlines 暂未收录 ${venueLabel(venue)} 的投稿截止日期。`;
+  } else {
+    const ranks = [['CCF', entry.rank.ccf], ['CORE', entry.rank.core], ['清华', entry.rank.thcpl]];
+    for (const [name, level] of ranks) {
+      if (level && level !== 'N') rank.append(el('span', { text: `${name} ${level}` }));
+    }
+    const next = nextEdition(entry.editions, now);
+    const latest = entry.editions[entry.editions.length - 1];
+    current.append(editionBlock(venue, next || latest, now));
+    note.append(next ? '' : '下一届的截止日期还没有公布，上面是最近一届的，可以参考往年的时间。',
+      '截止日期来自 ', el('a', { href: 'https://ccfddl.com/', target: '_blank', rel: 'noopener', text: 'ccf-deadlines' }),
+      '（社区维护），延期或更正可能来不及更新，请以会议官网为准。');
+    deadlineHistory(entry);
+  }
+  $('deadline-section').hidden = false;
+}
+
+// 只查会议（期刊一般随时投稿，没有统一的截止日期）
+async function showDeadlines(venue, isCurrent) {
+  if (!venue.stream.startsWith('conf/')) return;
+  let entry = null;
+  let error = null;
+  try {
+    entry = deadlineEntry(venue, await loadDeadlines());
+  } catch (err) {
+    console.warn('投稿截止日期暂时不可用：', err);
+    error = err;
+  }
+  if (!isCurrent()) return;
+  Object.assign(deadlineView, { venue, entry, error });
+  renderDeadlines();
 }
 
 /* ---------------- 投稿与录用趋势图 ---------------- */
@@ -1533,6 +1807,9 @@ function init() {
   $('export-csv').addEventListener('click', exportCsv);
   $('copy-links').addEventListener('click', copyLinks);
   $('load-more').addEventListener('click', loadMore);
+  // 倒计时每分钟更新一次；切回这个标签页时也更新
+  setInterval(() => { if (!document.hidden) renderDeadlines(); }, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) renderDeadlines(); });
   const trendSection = $('trend-section');
   trendSection.open = store.get('trend-open') !== false;
   trendSection.addEventListener('toggle', () => store.set('trend-open', trendSection.open, 365 * DAY));

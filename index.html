@@ -6,7 +6,7 @@
   <title>会议期刊论文速查</title>
   <meta name="description" content="输入会议或期刊名称，按年份查看每篇论文的链接。数据来自 dblp 和 OpenReview。">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232457c5'/%3E%3Cpath d='M9 8h10l4 4v12H9z' fill='none' stroke='white' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 15h8M12 19h8' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=20260927b">
+  <link rel="stylesheet" href="style.css?v=20260927c">
 </head>
 <body>
   <header class="site-header">
@@ -45,12 +45,25 @@
       </form>
     </section>
 
+    <section id="deadline-section" class="card" hidden>
+      <div class="section-head">
+        <h2 id="deadline-title">投稿截止日期</h2>
+        <span id="deadline-rank" class="dl-rank"></span>
+      </div>
+      <div id="deadline-current"></div>
+      <p id="deadline-note" class="trend-note"></p>
+      <details id="deadline-history" class="data-table">
+        <summary>往年截止日期</summary>
+        <div class="table-wrap"><table><thead></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+
     <details id="trend-section" class="card trend" open hidden>
       <summary><h2 id="trend-title">投稿与录用趋势</h2></summary>
       <div id="trend-range" class="segmented" role="group" aria-label="时间范围" hidden></div>
       <div id="trend-chart" aria-label="趋势图，可以用左右方向键逐年查看数值"></div>
       <p id="trend-note" class="trend-note"></p>
-      <details id="trend-table" class="trend-table">
+      <details id="trend-table" class="data-table">
         <summary>查看数据表</summary>
         <div class="table-wrap"><table><thead></thead><tbody></tbody></table></div>
       </details>
@@ -79,11 +92,11 @@
   </main>
 
   <footer class="wrap footer">
-    论文数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp computer science bibliography</a>（CC0）和 <a href="https://openreview.net" target="_blank" rel="noopener">OpenReview</a>。论文链接指向出版方、DOI 或开放获取页面。投稿与录用数据来自 <a href="https://csconfstats.xoveexu.com/" target="_blank" rel="noopener">CS Conf Stats</a>（Xovee Xu 整理）。
+    论文数据来自 <a href="https://dblp.org" target="_blank" rel="noopener">dblp computer science bibliography</a>（CC0）和 <a href="https://openreview.net" target="_blank" rel="noopener">OpenReview</a>。论文链接指向出版方、DOI 或开放获取页面。投稿与录用数据来自 <a href="https://csconfstats.xoveexu.com/" target="_blank" rel="noopener">CS Conf Stats</a>（Xovee Xu 整理），投稿截止日期来自 <a href="https://ccfddl.com/" target="_blank" rel="noopener">ccf-deadlines</a>（MIT 许可）。
   </footer>
 
-  <script src="latex.js?v=20260927b"></script>
-  <script src="chart.js?v=20260927b"></script>
-  <script src="app.js?v=20260927b"></script>
+  <script src="latex.js?v=20260927c"></script>
+  <script src="chart.js?v=20260927c"></script>
+  <script src="app.js?v=20260927c"></script>
 </body>
 </html>

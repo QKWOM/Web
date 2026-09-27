@@ -405,6 +405,55 @@ a.year-btn.external:hover { color: var(--text); }
   color: var(--muted);
 }
 
+/* 投稿截止日期 */
+.dl-rank { display: flex; flex-wrap: wrap; gap: 6px; }
+.dl-rank span {
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 20px;
+}
+.dl-edition + .dl-edition { margin-top: 14px; }
+.dl-edition-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 8px;
+}
+.dl-edition-head strong { font-size: 16px; }
+.dl-edition-head .muted, .dl-edition-head a { font-size: 13px; }
+.dl-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dl-block + .dl-block { margin-top: 10px; }
+.dl-item {
+  display: grid;
+  grid-template-columns: 5em auto minmax(0, 1fr) auto;
+  grid-template-areas: "kind time orig left";
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.dl-item.upcoming { border-color: var(--accent); background: var(--accent-weak); }
+.dl-kind { grid-area: kind; color: var(--muted); font-size: 13px; }
+.dl-time { grid-area: time; font-variant-numeric: tabular-nums; }
+.dl-time .muted { font-size: 13px; }
+.dl-orig { grid-area: orig; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dl-left { grid-area: left; justify-self: end; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.dl-item.upcoming .dl-left { color: var(--accent); }
+.dl-item.passed .dl-time strong, .dl-item.passed .dl-left { color: var(--muted); font-weight: 400; }
+.dl-comment { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.dl-comment.dl-round { margin: 0 0 4px; }
+
 /* 投稿与录用趋势 */
 .trend > summary {
   display: flex;
@@ -510,20 +559,24 @@ a.year-btn.external:hover { color: var(--text); }
 .trend-tip-row span:last-child { color: var(--muted); }
 .trend-tip-note { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .trend-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
-.trend-table { margin-top: 8px; font-size: 13px; }
-.trend-table summary { cursor: pointer; color: var(--muted); }
+.data-table { margin-top: 8px; font-size: 13px; }
+.data-table summary { cursor: pointer; color: var(--muted); }
 .table-wrap { max-height: 320px; margin-top: 8px; overflow: auto; }
-.trend-table table { width: 100%; border-collapse: collapse; }
-.trend-table th, .trend-table td {
+.data-table table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td {
   padding: 4px 10px 4px 0;
   border-bottom: 1px solid var(--border);
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.trend-table th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 600; }
-.trend-table th:first-child, .trend-table td:first-child { text-align: left; }
-.trend-table .note-cell { color: var(--muted); text-align: left; white-space: normal; min-width: 12em; }
+.data-table th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 600; }
+.data-table th:first-child, .data-table td:first-child { text-align: left; }
+.data-table .note-cell { color: var(--muted); text-align: left; white-space: normal; min-width: 12em; }
+#deadline-history th, #deadline-history td { text-align: left; }
+/* 列多：放不下时在表格里左右滚动，不挤压“说明”列 */
+#deadline-history table { width: max-content; min-width: 100%; }
+#deadline-history .note-cell { min-width: 16em; max-width: 30em; }
 @media (prefers-reduced-motion: reduce) {
   .trend > summary::before { transition: none; }
 }
@@ -552,6 +605,10 @@ a.year-btn.external:hover { color: var(--text); }
 }
 
 @media (max-width: 560px) {
+  .dl-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "kind left" "time time" "orig orig";
+  }
   .site-header { padding-top: 28px; }
   .site-header h1 { font-size: 24px; }
   .search button { padding: 12px 16px; }

@@ -14,6 +14,7 @@
 - 能直接下载 PDF 的论文，标题右侧有“PDF”按钮（CVF、OpenReview、arXiv、ACL Anthology、PMLR、NeurIPS、IJCAI、JMLR、ISCA、RSS 等开放获取来源）
 - 没有免费 PDF 的 IEEE 论文（ICRA、IROS、T-RO、RA-L、TPAMI 等）有空心的“IEEE PDF”按钮，打开 IEEE Xplore 的 PDF 页面，需要浏览器里已登录 IEEE 账号或处于有订阅的机构网络（见下文）
 - 标题里的 LaTeX 公式（如 `$\beta$-DARTS`、`${\text{CA}^{2}\text{ST}}$`）会转成普通文字显示（β-DARTS、CA²ST）
+- 投稿截止日期：选中会议后显示下一届（还没公布时显示最近一届）的摘要截止、全文截止时间，换算成北京时间（按浏览器所在时区）并显示还剩几天，同时列出官方公布的原始时间和时区；多轮投稿的会议逐轮列出；附会议日期、地点、官网链接和 CCF / CORE / 清华分级，可以展开查看往年截止日期
 - 趋势图：选中会议后显示各年的投稿数、录用数（同一张图）和录用率（下方单独一张图），可切换近 10 年、近 20 年、全部；鼠标悬停（或键盘左右键）查看某一年的数值，也可以展开数据表。没有投稿数据的会议和期刊显示 dblp 每年收录的论文数（见下文）
 - 按标题或作者筛选
 - 导出 CSV（Excel 可直接打开，含 PDF 地址），或一键复制所有论文链接
@@ -80,6 +81,14 @@ dblp 给 IEEE 论文的通常只有 DOI（如 `10.1109/TRO.2024.…`），而 IE
 - 只在点击时查询，结果会缓存；只接受 IEEE 的 DOI（`10.1109/`、`10.23919/`）。
 - 需要用 `server.py` 启动；不需要这个按钮时，把 `app.js` 里的 `CONFIG.ieeePdf` 改成 `false`。
 
+### 投稿截止日期
+
+- 数据来自社区维护的 [ccf-deadlines](https://github.com/ccfddl/ccf-deadlines)（[ccfddl.com](https://ccfddl.com/)，MIT 许可，约 370 个会议，包括 ICRA、IROS、RSS、CoRL、CVPR、NeurIPS、ICLR 等）。网页打开会议时读取它汇总好的数据文件（依次尝试 jsDelivr、GitHub、ccfddl.com），在浏览器里缓存一天；本仓库不保存这份数据。
+- 会议按 dblp 标识对应（ccf-deadlines 的每个会议都记录了 dblp 标识）；同一标识对应多个会议时（例如 CCS 和 AsiaCCS）选名称一致的那个。
+- 时区换算：AoE 即 UTC-12；PT（美国太平洋时间）按当时是否夏令时换算成 UTC-7 或 UTC-8；认不出的时区只显示原始时间。
+- 数据里通常只有截止时间，没有“开放投稿”的日期；有的会议会在说明里写（例如 ICML 的“Paper Submissions Open on OpenReview …”），会原样显示。
+- 截止日期经常延期，数据更新可能有延迟，请以会议官网为准。期刊一般随时投稿，不显示这一栏。
+
 ### 投稿与录用数据
 
 - 每年的投稿数和录用数来自 [CS Conf Stats](https://csconfstats.xoveexu.com/)（Xovee Xu 整理的 [cs-conf-stats](https://github.com/Xovee/cs-conf-stats)，约 100 个计算机会议，包括 ICRA、IROS、RSS、NeurIPS、ICML、ICLR、CVPR、ICCV、ECCV、ACL、AAAI、KDD 等）。网页打开会议时从 jsDelivr（不通时换 GitHub）读取它的数据文件，在浏览器里缓存一天；本仓库不保存这份数据。
@@ -128,4 +137,5 @@ dblp 给 IEEE 论文的通常只有 DOI（如 `10.1109/TRO.2024.…`），而 IE
 - 论文链接大多指向出版方或 DOI 页面，不一定能免费下载 PDF；Springer、ACM 等需要订阅的出版社暂不提供下载按钮。
 - 刚开完的会议如果不在 OpenReview 上（例如 CVPR、ACL），要等 dblp 收录后才能查到。
 - 论文按标题排序，不是论文集里的目录顺序。
+- 投稿截止日期以 ccf-deadlines 为准，个别会议（例如 HRI、Humanoids）没有收录。
 - 投稿与录用数据以 CS Conf Stats 为准，最新一届可能还没更新；CoRL 等未收录的会议只能看 dblp 的论文数。
