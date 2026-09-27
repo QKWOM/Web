@@ -354,6 +354,13 @@ a.year-btn.external:hover { color: var(--text); }
   line-height: 20px;
 }
 .pdf-btn:hover { background: var(--accent-hover); color: var(--on-accent); text-decoration: none; }
+/* IEEE 的 PDF 需要登录，用空心样式和免费 PDF 区分 */
+.pdf-btn.ieee {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.pdf-btn.ieee:hover { background: var(--accent-weak); color: var(--accent); }
 .paper-title.nolink { color: var(--text); }
 .paper-authors {
   margin-top: 2px;

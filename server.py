@@ -39,6 +39,10 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 UPSTREAMS = ['https://sparql.dblp.org/sparql', 'https://qlever.cs.uni-freiburg.de/api/dblp']
 # OpenReview API，用来补充 dblp 尚未收录的年份
 OPENREVIEW = 'https://api2.openreview.net'
+# DOI 官方解析接口，用来把 IEEE 论文的 DOI 换成 IEEE Xplore 的文档编号（arnumber）
+DOI_API = 'https://doi.org/api/handles/'
+IEEE_DOI = re.compile(r'^10\.(?:1109|23919)/[A-Za-z0-9.;()/:_-]+$')
+IEEE_STAMP = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={}'
 TOKEN_FILE = os.path.join(ROOT, '.openreview_token')
 TOKEN_LIFETIME = 7 * 24 * 3600  # OpenReview 允许的最长有效期：一周
 TIMEOUT = 60
@@ -321,6 +325,32 @@ def fetch_openreview(path, query_string):
     return 200, json.dumps(slim(path, data), ensure_ascii=False).encode('utf-8')
 
 
+# ---------------- IEEE PDF ----------------
+
+_arnumbers = {}
+
+
+def ieee_arnumber(doi):
+    """通过 doi.org 查出 IEEE 论文在 IEEE Xplore 上的文档编号；查不到返回 None。"""
+    if doi in _arnumbers:
+        return _arnumbers[doi]
+    arnumber = None
+    try:
+        status, body, _ = http_request(f'{DOI_API}{urllib.parse.quote(doi, safe="/")}?type=URL', 'application/json')
+        values = parse_json(body).get('values') if status == 200 else None
+        for value in values or []:
+            url = str(((value or {}).get('data') or {}).get('value', ''))
+            m = re.search(r'ieeexplore\.ieee\.org/(?:abstract/)?(?:document/|xpl/articleDetails\.jsp\?arnumber=)(\d+)', url)
+            if value.get('type') == 'URL' and m:
+                arnumber = m.group(1)
+                break
+    except (UpstreamError, ValueError, AttributeError):
+        pass
+    if arnumber:
+        _arnumbers[doi] = arnumber
+    return arnumber
+
+
 def upstream_error_message(e, name='dblp 查询服务'):
     if e.network_only:
         return f'本地服务器也无法连接 {name}，请检查网络（例如是否需要开代理）。详情：{e}'
@@ -337,6 +367,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.headers.get('Host', '') not in (f'127.0.0.1:{port}', f'localhost:{port}'):
             self.send_json(403, {'error': 'forbidden host'})
             return
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == '/ieee-pdf':
+            self.ieee_pdf(parsed.query)
+            return
         route, _, rest = self.path.lstrip('/').partition('/')
         if route in ('dblp-proxy', 'openreview-proxy'):
             self.proxy(route, *rest.partition('?')[::2])
@@ -345,9 +379,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         # 网页文件每次都让浏览器检查更新，否则 git pull 之后浏览器可能还在用旧的 app.js
-        if not self.path.lstrip('/').startswith(('dblp-proxy/', 'openreview-proxy/')):
+        if b'Cache-Control' not in b''.join(getattr(self, '_headers_buffer', [])):
             self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
+
+    def ieee_pdf(self, query):
+        """把 IEEE 论文的 DOI 转成 IEEE Xplore 的 PDF 页面并跳转过去。
+
+        PDF 由浏览器直接向 IEEE 请求，用的是浏览器里的 IEEE 登录状态或机构订阅；
+        这里只负责查出文档编号，不接触任何 IEEE 账号信息。
+        """
+        doi = (urllib.parse.parse_qs(query).get('doi') or [''])[0].strip()
+        if not IEEE_DOI.match(doi):
+            self.send_json(400, {'error': '不是 IEEE 的 DOI'})
+            return
+        arnumber = ieee_arnumber(doi)
+        # 查不到编号时退回 DOI 页面（IEEE 的论文页）
+        target = IEEE_STAMP.format(arnumber) if arnumber else f'https://doi.org/{urllib.parse.quote(doi, safe="/")}'
+        self.send_response(302)
+        self.send_header('Location', target)
+        self.send_header('Content-Length', '0')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
 
     def proxy(self, route, path, query_string):
         try:

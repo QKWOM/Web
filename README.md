@@ -11,7 +11,8 @@
 - 列出所有年份及每年的论文数量，点击年份加载论文；每次加载 1000 篇，更多的点“加载更多”
 - 会议中 dblp 还没收录的年份从 OpenReview 补充（例如刚开完的 CoRL、ICLR、NeurIPS、ICML），年份按钮上会标注“来自 OpenReview”
 - 每篇论文显示标题、作者和链接：开放获取页面（CVF、OpenReview、ACL Anthology、PMLR 等）优先，另附 DOI 和 dblp 链接
-- 能直接下载 PDF 的论文，标题右侧有“PDF”按钮（CVF、OpenReview、arXiv、ACL Anthology、PMLR、NeurIPS、IJCAI、JMLR、ISCA、RSS 等开放获取来源；IEEE、Springer 等需要订阅的不显示）
+- 能直接下载 PDF 的论文，标题右侧有“PDF”按钮（CVF、OpenReview、arXiv、ACL Anthology、PMLR、NeurIPS、IJCAI、JMLR、ISCA、RSS 等开放获取来源）
+- 没有免费 PDF 的 IEEE 论文（ICRA、IROS、T-RO、RA-L、TPAMI 等）有空心的“IEEE PDF”按钮，打开 IEEE Xplore 的 PDF 页面，需要浏览器里已登录 IEEE 账号或处于有订阅的机构网络（见下文）
 - 标题里的 LaTeX 公式（如 `$\beta$-DARTS`、`${\text{CA}^{2}\text{ST}}$`）会转成普通文字显示（β-DARTS、CA²ST）
 - 按标题或作者筛选
 - 导出 CSV（Excel 可直接打开，含 PDF 地址），或一键复制所有论文链接
@@ -70,6 +71,14 @@ OpenReview 现在会对匿名的“列表”请求做人机验证：按会场列
 
 登录令牌只留在 `server.py` 里，不会发给网页。中转只允许两种只读查询（某个会场的已录用论文、会场列表），返回给网页的只有标题、作者、PDF 等字段；并且只接受来自本机地址（`127.0.0.1` / `localhost`）的请求。
 
+### IEEE PDF
+
+dblp 给 IEEE 论文的通常只有 DOI（如 `10.1109/TRO.2024.…`），而 IEEE Xplore 的 PDF 地址要用文档编号（`https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=…`）。点“IEEE PDF”时，`server.py` 通过 DOI 官方解析接口（`https://doi.org/api/handles/…`）查出文档编号，再让浏览器跳到对应的 PDF 页面；查不到时跳到 DOI 页面（IEEE 的论文页）。
+
+- PDF 由浏览器直接向 IEEE 请求，用的是浏览器里的 IEEE 登录状态或机构订阅；网站和 `server.py` 不需要、也不接触 IEEE 账号。
+- 只在点击时查询，结果会缓存；只接受 IEEE 的 DOI（`10.1109/`、`10.23919/`）。
+- 需要用 `server.py` 启动；不需要这个按钮时，把 `app.js` 里的 `CONFIG.ieeePdf` 改成 `false`。
+
 ### 年份的计算
 
 论文所属年份优先按会议举办年份计算（例如 ECCV 2024 的论文集 2025 年才出版，仍算在 2024 年），没有举办年份时用出版年份。请求会自动排队，两次请求至少间隔 0.3 秒；遇到限流（HTTP 429）会等待后重试。
@@ -108,6 +117,6 @@ OpenReview 现在会对匿名的“列表”请求做人机验证：按会场列
 
 ## 已知限制
 
-- 论文链接大多指向出版方或 DOI 页面，不一定能免费下载 PDF。
+- 论文链接大多指向出版方或 DOI 页面，不一定能免费下载 PDF；Springer、ACM 等需要订阅的出版社暂不提供下载按钮。
 - 刚开完的会议如果不在 OpenReview 上（例如 CVPR、ACL），要等 dblp 收录后才能查到。
 - 论文按标题排序，不是论文集里的目录顺序。

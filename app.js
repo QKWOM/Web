@@ -16,6 +16,9 @@ const CONFIG = {
     'https://api2.openreview.net',
   ],
   minGapMs: 300, // 两次请求之间的最小间隔，避免给服务器造成压力
+  // 没有免费 PDF 的 IEEE 论文显示“IEEE PDF”按钮：跳到 IEEE Xplore 的 PDF 页面，
+  // 需要浏览器里已登录 IEEE 账号或处于有订阅的机构网络。不需要可以改成 false。
+  ieeePdf: true,
 };
 
 // 常用按钮，按研究方向分组；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
@@ -381,6 +384,24 @@ const PDF_RULES = [
   [/^https:\/\/(?:www\.)?roboticsproceedings\.org\/(rss\d+\/p\d+)\.html$/i, (m) => `https://www.roboticsproceedings.org/${m[1]}.pdf`],
 ];
 
+const IEEE_DOI = /^10\.(?:1109|23919)\/[A-Za-z0-9.;()/:_-]+$/;
+
+// IEEE Xplore 的 PDF 页面：直接给出的文档页可以直接换算；只有 DOI 时交给 server.py 在点击时查编号
+function ieeePdfLink(links) {
+  if (!CONFIG.ieeePdf) return '';
+  for (const link of links) {
+    const m = /^https?:\/\/ieeexplore\.ieee\.org\/(?:abstract\/)?document\/(\d+)/i.exec(link);
+    if (m) return `https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=${m[1]}`;
+  }
+  if (location.protocol === 'file:' || dblp.localProxyMissing()) return '';
+  for (const link of links) {
+    const m = /^https?:\/\/(?:dx\.)?doi\.org\/(.+)$/i.exec(link);
+    const doi = m && decodeURIComponent(m[1]);
+    if (doi && IEEE_DOI.test(doi)) return `ieee-pdf?doi=${encodeURIComponent(doi)}`;
+  }
+  return '';
+}
+
 function pdfLink(links) {
   for (const link of links) {
     const url = link.replace(/^http:\/\//i, 'https://');
@@ -579,6 +600,7 @@ ORDER BY ?title`);
       pdf: pdfLink(links),
       dblp: safeUrl(val(row, 'publ')),
     };
+    if (!paper.pdf) paper.ieeePdf = ieeePdfLink(links);
     (/#Editorship\b/.test(val(row, 'types')) ? proceedings : papers).push(paper);
   }
   return { papers, proceedings, hasMore: rows.length >= PAGE_SIZE };
@@ -1136,7 +1158,7 @@ function addPapers({ papers, proceedings, hasMore }) {
         href
           ? el('a', { class: 'paper-title', href, target: '_blank', rel: 'noopener', text: p.title })
           : el('span', { class: 'paper-title nolink', text: p.title }),
-        p.pdf ? pdfButton(p) : null,
+        p.pdf ? pdfButton(p) : p.ieeePdf ? ieeeButton(p) : null,
       ]),
       p.authors.length ? el('div', { class: 'paper-authors', text: p.authors.join(', ') }) : null,
       links.length ? el('div', { class: 'paper-links' }, links) : null,
@@ -1153,18 +1175,23 @@ function addPapers({ papers, proceedings, hasMore }) {
   updateCount();
 }
 
-function pdfButton(p) {
-  const button = el('a', {
-    class: 'pdf-btn',
-    href: p.pdf,
-    target: '_blank',
-    rel: 'noopener',
-    title: '下载 PDF',
-    'aria-label': `下载 PDF：${p.title}`,
-  });
-  button.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  button.append('PDF');
+const DOWNLOAD_ICON = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function downloadButton(href, text, cls, title, label) {
+  const button = el('a', { class: cls, href, target: '_blank', rel: 'noopener', title, 'aria-label': label });
+  button.innerHTML = DOWNLOAD_ICON;
+  button.append(text);
   return button;
+}
+
+function pdfButton(p) {
+  return downloadButton(p.pdf, 'PDF', 'pdf-btn', '下载 PDF', `下载 PDF：${p.title}`);
+}
+
+function ieeeButton(p) {
+  return downloadButton(p.ieeePdf, 'IEEE PDF', 'pdf-btn ieee',
+    '在 IEEE Xplore 打开 PDF（需要浏览器里已登录 IEEE 账号，或处于有订阅的机构网络）',
+    `在 IEEE Xplore 打开 PDF：${p.title}`);
 }
 
 function visibleRows() {
