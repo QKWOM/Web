@@ -10,6 +10,12 @@
   --on-accent: #ffffff;
   --danger: #b3261e;
   --danger-weak: #fbeceb;
+  /* 趋势图：数据系列颜色（已用配色校验脚本检查过色盲区分度和对比度）、网格线 */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --grid: #ecece8;
+  --axis: #c9c9c3;
   --radius: 10px;
   --shadow: 0 1px 2px rgba(20, 20, 30, 0.05);
   color-scheme: light;
@@ -28,12 +34,18 @@
     --on-accent: #0d1426;
     --danger: #ff8a80;
     --danger-weak: #3a1f1e;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --grid: #2a2d33;
+    --axis: #454952;
     --shadow: none;
     color-scheme: dark;
   }
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html { -webkit-text-size-adjust: 100%; }
 
@@ -391,6 +403,129 @@ a.year-btn.external:hover { color: var(--text); }
 .empty {
   padding: 16px 0;
   color: var(--muted);
+}
+
+/* 投稿与录用趋势 */
+.trend > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.trend > summary::-webkit-details-marker { display: none; }
+.trend > summary::before {
+  content: "";
+  width: 7px; height: 7px;
+  margin: 0 4px 0 2px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+.trend[open] > summary::before { transform: rotate(45deg); }
+.trend > summary h2 { margin: 0; }
+.trend[open] > summary { margin-bottom: 12px; }
+.segmented {
+  display: inline-flex;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.segmented button {
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button:hover { background: var(--accent-weak); color: var(--text); }
+.segmented button[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.trend-chart {
+  position: relative;
+  border-radius: 6px;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.trend-chart:focus { outline: none; }
+.trend-chart:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.trend-block + .trend-block { margin-top: 10px; }
+.trend-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  margin-bottom: 2px;
+}
+.trend-title { margin: 0; font-size: 14px; font-weight: 600; }
+.trend-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 13px; }
+.trend-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+/* 图例和提示框里的线段标记：和折线一样是细线加圆点 */
+.trend-key {
+  position: relative;
+  flex: none;
+  width: 16px; height: 2px;
+  border-radius: 1px;
+  background: var(--c);
+}
+.trend-key::after {
+  content: "";
+  position: absolute;
+  left: 4px; top: -3px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.trend-svg { display: block; overflow: visible; }
+.trend-tick { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.trend-end { fill: var(--text); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.trend-grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+.trend-base { stroke: var(--axis); }
+.trend-line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+/* 圆点直径 8px，外面一圈 2px 的底色，压在线上也看得清 */
+.trend-dot { fill: var(--c); stroke: var(--surface); stroke-width: 2; }
+.trend-cross { stroke: var(--muted); stroke-width: 1; shape-rendering: crispEdges; }
+.trend-tip {
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 2;
+  min-width: 132px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.trend-tip-head { margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+.trend-tip-row { display: flex; align-items: center; gap: 8px; }
+.trend-tip-row strong { font-variant-numeric: tabular-nums; }
+.trend-tip-row span:last-child { color: var(--muted); }
+.trend-tip-note { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.trend-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.trend-table { margin-top: 8px; font-size: 13px; }
+.trend-table summary { cursor: pointer; color: var(--muted); }
+.table-wrap { max-height: 320px; margin-top: 8px; overflow: auto; }
+.trend-table table { width: 100%; border-collapse: collapse; }
+.trend-table th, .trend-table td {
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.trend-table th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 600; }
+.trend-table th:first-child, .trend-table td:first-child { text-align: left; }
+.trend-table .note-cell { color: var(--muted); text-align: left; white-space: normal; min-width: 12em; }
+@media (prefers-reduced-motion: reduce) {
+  .trend > summary::before { transition: none; }
 }
 
 .footer {

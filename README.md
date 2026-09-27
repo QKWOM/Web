@@ -14,6 +14,7 @@
 - 能直接下载 PDF 的论文，标题右侧有“PDF”按钮（CVF、OpenReview、arXiv、ACL Anthology、PMLR、NeurIPS、IJCAI、JMLR、ISCA、RSS 等开放获取来源）
 - 没有免费 PDF 的 IEEE 论文（ICRA、IROS、T-RO、RA-L、TPAMI 等）有空心的“IEEE PDF”按钮，打开 IEEE Xplore 的 PDF 页面，需要浏览器里已登录 IEEE 账号或处于有订阅的机构网络（见下文）
 - 标题里的 LaTeX 公式（如 `$\beta$-DARTS`、`${\text{CA}^{2}\text{ST}}$`）会转成普通文字显示（β-DARTS、CA²ST）
+- 趋势图：选中会议后显示各年的投稿数、录用数（同一张图）和录用率（下方单独一张图），可切换近 10 年、近 20 年、全部；鼠标悬停（或键盘左右键）查看某一年的数值，也可以展开数据表。没有投稿数据的会议和期刊显示 dblp 每年收录的论文数（见下文）
 - 按标题或作者筛选
 - 导出 CSV（Excel 可直接打开，含 PDF 地址），或一键复制所有论文链接
 - 地址栏会记住当前查询，例如 `?q=CVPR&venue=conf/cvpr&year=2024`，可以直接分享
@@ -79,6 +80,13 @@ dblp 给 IEEE 论文的通常只有 DOI（如 `10.1109/TRO.2024.…`），而 IE
 - 只在点击时查询，结果会缓存；只接受 IEEE 的 DOI（`10.1109/`、`10.23919/`）。
 - 需要用 `server.py` 启动；不需要这个按钮时，把 `app.js` 里的 `CONFIG.ieeePdf` 改成 `false`。
 
+### 投稿与录用数据
+
+- 每年的投稿数和录用数来自 [CS Conf Stats](https://csconfstats.xoveexu.com/)（Xovee Xu 整理的 [cs-conf-stats](https://github.com/Xovee/cs-conf-stats)，约 100 个计算机会议，包括 ICRA、IROS、RSS、NeurIPS、ICML、ICLR、CVPR、ICCV、ECCV、ACL、AAAI、KDD 等）。网页打开会议时从 jsDelivr（不通时换 GitHub）读取它的数据文件，在浏览器里缓存一天；本仓库不保存这份数据。
+- 只统计主会（main track）；录用率 = 录用数 ÷ 投稿数。个别年份是估计值或口径不同（例如 ICRA 2026 用的是有效投稿数），原数据里的说明显示在提示框和数据表的备注里。
+- 会议按 dblp 标识对应（例如 `conf/icra` ↔ ICRA、`conf/nips` ↔ NeurIPS），不按名称猜，所以 workshop 不会用主会的数据。
+- CS Conf Stats 没有的会议（例如 CoRL）和期刊，没有公开的投稿数，图中改为 dblp 每年收录的论文数（会议大致等于录用数），并在图下注明。数据文件加载失败时也是这样，并说明原因。
+
 ### 年份的计算
 
 论文所属年份优先按会议举办年份计算（例如 ECCV 2024 的论文集 2025 年才出版，仍算在 2024 年），没有举办年份时用出版年份。请求会自动排队，两次请求至少间隔 0.3 秒；遇到限流（HTTP 429）会等待后重试。
@@ -120,3 +128,4 @@ dblp 给 IEEE 论文的通常只有 DOI（如 `10.1109/TRO.2024.…`），而 IE
 - 论文链接大多指向出版方或 DOI 页面，不一定能免费下载 PDF；Springer、ACM 等需要订阅的出版社暂不提供下载按钮。
 - 刚开完的会议如果不在 OpenReview 上（例如 CVPR、ACL），要等 dblp 收录后才能查到。
 - 论文按标题排序，不是论文集里的目录顺序。
+- 投稿与录用数据以 CS Conf Stats 为准，最新一届可能还没更新；CoRL 等未收录的会议只能看 dblp 的论文数。

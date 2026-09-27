@@ -19,6 +19,11 @@ const CONFIG = {
   // 没有免费 PDF 的 IEEE 论文显示“IEEE PDF”按钮：跳到 IEEE Xplore 的 PDF 页面，
   // 需要浏览器里已登录 IEEE 账号或处于有订阅的机构网络。不需要可以改成 false。
   ieeePdf: true,
+  // 每年投稿数和录用数：CS Conf Stats（https://csconfstats.xoveexu.com/，Xovee Xu 整理）的数据文件，按顺序尝试
+  confStats: [
+    'https://cdn.jsdelivr.net/gh/Xovee/cs-conf-stats@main/data/conf.json',
+    'https://raw.githubusercontent.com/Xovee/cs-conf-stats/main/data/conf.json',
+  ],
 };
 
 // 常用按钮，按研究方向分组；带 venue 的直接打开对应的 dblp 标识（避免同名，例如 RAM 期刊和 RAM 会议）
@@ -270,6 +275,13 @@ const openreview = createClient({
   bases: CONFIG.openreview,
   accept: 'application/json',
   isValid: (d) => !!(d && (Array.isArray(d.notes) || Array.isArray(d.groups))),
+});
+
+const confStatsClient = createClient({
+  name: 'CS Conf Stats',
+  bases: CONFIG.confStats,
+  accept: 'application/json',
+  isValid: (d) => !!(d && Array.isArray(d.conferences)),
 });
 
 async function sparql(query) {
@@ -688,6 +700,79 @@ async function fetchOpenReviewPapers(venue, entry, offset = 0) {
   return { papers, proceedings: [], hasMore: notes.length >= PAGE_SIZE };
 }
 
+/* ---------------- 投稿与录用数据 ---------------- */
+
+// dblp 标识和 CS Conf Stats 会议名对不上的情况；其余按标识直接比较（conf/icra ↔ ICRA）
+const CONF_STATS_NAMES = {
+  nips: 'NeurIPS',
+  sp: 'IEEE S&P',
+  uss: 'USENIX Security',
+  mm: 'ACM MM',
+  vldb: 'VLDB',
+  pvldb: 'VLDB',
+  huc: 'UbiComp',
+  siggrapha: 'SIGGRAPH Asia',
+  vissym: 'EuroVis',
+  visualization: 'VIS',
+  icmcs: 'ICME',
+  mir: 'ICMR',
+  codes: 'CODES-ISSS',
+  coco: 'CCC',
+  usenix: 'ATC',
+  gis: 'SIGSPATIAL',
+  sigsoft: 'FSE',
+  ipps: 'IPDPS',
+  kbse: 'ASE',
+};
+
+const confStatsKey = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// 只匹配 dblp 标识，不按名称猜，避免把研讨会（例如 CVPR Workshops）当成主会
+function confStatsKeyOf(venue) {
+  const [kind, key] = venue.stream.split('/');
+  if (kind !== 'conf' && venue.stream !== 'journals/pvldb') return '';
+  return confStatsKey(CONF_STATS_NAMES[key] || key);
+}
+
+// 只保留画图用的字段：{ 会议: [[年份, 投稿数, 录用数, 举办地, 备注], …] }，只统计主会（main track）
+function slimConfStats(data) {
+  const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const text = (v) => (typeof v === 'string' ? v.trim().slice(0, 300) : '');
+  const index = {};
+  for (const conf of data.conferences) {
+    if (!conf || typeof conf.series !== 'string' || conf.series === 'Template' || !Array.isArray(conf.yearly_data)) continue;
+    const rows = [];
+    for (const entry of conf.yearly_data) {
+      const year = entry && entry.year;
+      const main = entry && entry.main_track;
+      if (!Number.isInteger(year) || !main) continue;
+      const sub = count(main.num_sub);
+      const acc = count(main.num_acc);
+      if (sub === null && acc === null) continue;
+      rows.push([year, sub, acc, text(entry.location), text(entry.note)]);
+    }
+    rows.sort((a, b) => a[0] - b[0]);
+    if (rows.length) index[confStatsKey(conf.series)] = rows;
+  }
+  return index;
+}
+
+let confStatsPending = null;
+function loadConfStats() {
+  const cached = store.get('confstats');
+  if (cached) return Promise.resolve(cached);
+  if (!confStatsPending) {
+    confStatsPending = confStatsClient.get('').then((data) => {
+      const index = slimConfStats(data);
+      store.set('confstats', index, DAY);
+      return index;
+    }).finally(() => {
+      confStatsPending = null;
+    });
+  }
+  return confStatsPending;
+}
+
 /* ---------------- 界面 ---------------- */
 
 const state = {
@@ -786,7 +871,7 @@ function renderPopular() {
 }
 
 function hideFrom(section) {
-  const order = ['venues-section', 'years-section', 'papers-section'];
+  const order = ['venues-section', 'years-section', 'trend-section', 'papers-section'];
   for (const id of order.slice(order.indexOf(section))) $(id).hidden = true;
 }
 
@@ -919,6 +1004,7 @@ async function selectVenue(venue, restore = {}) {
   state.venue = venue;
   state.year = null;
   state.years = [];
+  trend.ready = false;
   const isCurrent = nextToken('venue', 'year');
   markVenue();
   hideFrom('years-section');
@@ -942,6 +1028,7 @@ async function selectVenue(venue, restore = {}) {
     if (!isCurrent()) return;
     state.years = years.map((y) => ({ ...y, source: 'dblp' }));
     renderYears();
+    showTrend(venue, isCurrent);
   } catch (err) {
     if (isCurrent()) setStatus(errorMessage(err), 'error');
     return;
@@ -975,6 +1062,7 @@ async function selectVenue(venue, restore = {}) {
   if (extra.length || links.length) {
     state.years = [...state.years, ...extra, ...links].sort((a, b) => b.year - a.year);
     renderYears();
+    if (trend.ready) renderTrend();
   }
 
   if (!state.years.length) {
@@ -1046,6 +1134,156 @@ function renderYears() {
     btn.dataset.year = year;
     box.append(btn);
   }
+}
+
+/* ---------------- 投稿与录用趋势图 ---------------- */
+
+const RANGES = [[10, '近 10 年'], [20, '近 20 年'], [0, '全部']];
+const trend = {
+  chart: null,
+  ready: false, // 当前会议的投稿数据已经查过（有或没有）
+  stats: null,
+  error: null,
+  range: [10, 20, 0].includes(store.get('trend-range')) ? store.get('trend-range') : 20,
+};
+
+// 投稿数据和 dblp 年份都准备好后再显示，避免先画一张图再换掉
+async function showTrend(venue, isCurrent) {
+  let stats = null;
+  let error = null;
+  const key = confStatsKeyOf(venue);
+  if (key) {
+    try {
+      stats = (await loadConfStats())[key] || null;
+    } catch (err) {
+      console.warn('投稿与录用数据暂时不可用：', err);
+      error = err;
+    }
+  }
+  if (!isCurrent()) return;
+  Object.assign(trend, { stats, error, ready: true });
+  renderTrend();
+}
+
+const formatCount = (v) => Math.round(v).toLocaleString('en-US');
+const formatRate = (v) => `${v.toFixed(1)}%`;
+const formatRateTick = (v) => `${+v.toFixed(1)}%`;
+
+function trendModel(venue) {
+  const label = venueLabel(venue);
+  if (trend.stats && trend.stats.length >= 2) {
+    const rows = trend.stats.map(([year, sub, acc, place, note]) => ({
+      year, sub, acc, place, note,
+      rate: sub && acc !== null && acc <= sub ? (acc / sub) * 100 : null,
+    }));
+    return {
+      title: `${label} 投稿与录用趋势`,
+      rows,
+      charts: [
+        {
+          title: '投稿数与录用数（篇）', height: 200, ticks: 4, format: formatCount, tick: formatCount,
+          series: [{ key: 'sub', label: '投稿', color: 'var(--series-1)' }, { key: 'acc', label: '录用', color: 'var(--series-2)' }],
+        },
+        {
+          title: '录用率', height: 110, ticks: 3, format: formatRate, tick: formatRateTick,
+          series: [{ key: 'rate', label: '录用率', color: 'var(--series-3)' }],
+        },
+      ],
+      heading: (row) => (row.place ? `${row.year} · ${row.place}` : String(row.year)),
+      note: (row) => row.note,
+    };
+  }
+  // 没有投稿数据：画 dblp 每年收录的论文数（会议大致相当于录用数）
+  const rows = state.years
+    .filter((y) => y.source !== 'openreview-link' && y.count > 0)
+    .map((y) => ({ year: y.year, count: y.count }))
+    .sort((a, b) => a.year - b.year);
+  return {
+    title: `${label} 每年论文数`,
+    rows,
+    charts: [{
+      title: 'dblp 收录的论文数（篇）', height: 200, ticks: 4, format: formatCount, tick: formatCount,
+      series: [{ key: 'count', label: '论文', color: 'var(--series-1)' }],
+    }],
+  };
+}
+
+function trendNote(venue, model) {
+  const label = venueLabel(venue);
+  const note = $('trend-note');
+  note.textContent = '';
+  if (model.charts.length > 1) {
+    note.append('数据来自 ', el('a', { href: 'https://csconfstats.xoveexu.com/', target: '_blank', rel: 'noopener', text: 'CS Conf Stats' }),
+      '（Xovee Xu 整理），只统计主会（main track），录用率 = 录用数 ÷ 投稿数。');
+    if (model.rows.some((r) => r.note)) note.append('个别年份的统计口径有说明，见数据表的备注。');
+  } else if (trend.error) {
+    note.textContent = `投稿与录用数据加载失败（${trend.error.message}），图中暂时显示 dblp 每年收录的论文数。`;
+  } else if (venue.type === 'Journal' && venue.stream !== 'journals/pvldb') {
+    note.textContent = '期刊没有统一公开的投稿数据，图中是 dblp 每年收录的论文数。';
+  } else {
+    note.textContent = `CS Conf Stats 暂未收录 ${label} 的投稿与录用数据，图中是 dblp 每年收录的论文数，可以近似看作录用数。`;
+  }
+}
+
+function trendTable(model) {
+  const withNotes = model.rows.some((r) => r.note);
+  const columns = model.charts.length > 1
+    ? [['年份', (r) => String(r.year)], ['投稿', (r) => (r.sub === null ? '—' : formatCount(r.sub))],
+      ['录用', (r) => (r.acc === null ? '—' : formatCount(r.acc))], ['录用率', (r) => (r.rate === null ? '—' : formatRate(r.rate))]]
+    : [['年份', (r) => String(r.year)], ['论文数', (r) => formatCount(r.count)]];
+  if (withNotes) columns.push(['备注', (r) => r.note || '']);
+  const table = $('trend-table');
+  const head = table.querySelector('thead');
+  const body = table.querySelector('tbody');
+  head.textContent = '';
+  body.textContent = '';
+  head.append(el('tr', {}, columns.map(([name]) => el('th', { scope: 'col', text: name }))));
+  for (const row of [...model.rows].reverse()) {
+    body.append(el('tr', {}, columns.map(([name, get]) => el('td', { class: name === '备注' ? 'note-cell' : '', text: get(row) }))));
+  }
+}
+
+function renderTrend() {
+  const venue = state.venue;
+  const section = $('trend-section');
+  if (!venue || !trend.ready) return;
+  const model = trendModel(venue);
+  if (model.rows.length < 2) {
+    section.hidden = true;
+    return;
+  }
+
+  // 时间范围：只列出会改变显示内容的选项
+  const newest = model.rows[model.rows.length - 1].year;
+  const span = newest - model.rows[0].year;
+  const choices = RANGES.filter(([years]) => !years || span >= years);
+  const range = choices.some(([years]) => years === trend.range) ? trend.range : 0;
+  const box = $('trend-range');
+  box.textContent = '';
+  box.hidden = choices.length < 2;
+  for (const [years, text] of choices) {
+    box.append(el('button', {
+      type: 'button',
+      text,
+      'aria-pressed': String(years === range),
+      onclick: () => {
+        trend.range = years;
+        store.set('trend-range', years, 365 * DAY);
+        renderTrend();
+      },
+    }));
+  }
+  if (range) {
+    const recent = model.rows.filter((r) => r.year > newest - range);
+    model.rows = recent.length >= 2 ? recent : model.rows.slice(-2);
+  }
+
+  $('trend-title').textContent = model.title;
+  trendNote(venue, model);
+  trendTable(model);
+  section.hidden = false;
+  trend.chart = trend.chart || TrendChart.create($('trend-chart'));
+  trend.chart.update(model);
 }
 
 function markYear() {
@@ -1295,6 +1533,9 @@ function init() {
   $('export-csv').addEventListener('click', exportCsv);
   $('copy-links').addEventListener('click', copyLinks);
   $('load-more').addEventListener('click', loadMore);
+  const trendSection = $('trend-section');
+  trendSection.open = store.get('trend-open') !== false;
+  trendSection.addEventListener('toggle', () => store.set('trend-open', trendSection.open, 365 * DAY));
 
   // 支持分享链接：?q=CVPR&venue=conf/cvpr&year=2024
   const params = new URLSearchParams(location.search);
